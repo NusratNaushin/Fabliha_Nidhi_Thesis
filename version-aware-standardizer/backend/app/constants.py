@@ -167,3 +167,143 @@ DEFAULT_LANGUAGE_REFSETS: tuple[str, ...] = (
     LANGUAGE_REFSET_US_ENGLISH,
     LANGUAGE_REFSET_GB_ENGLISH,
 )
+
+
+# ===========================================================================
+# Result standardization
+#
+# The layer above terminology: once we know *which test* a row is, these say
+# what kind of answer it carries and how far we got in normalising it.
+# ===========================================================================
+
+
+class LoincScale(StrEnum):
+    """LOINC SCALE_TYP -- what shape of answer the test produces.
+
+    This is read from the release, never guessed: it decides whether a value is
+    parsed as a number, a category or free text.
+    """
+
+    QN = "Qn"            # quantitative: 120, 7.4, <2
+    SEMI_QN = "SemiQn"   # buckets or titres: 1+, 1:16
+    ORD = "Ord"          # ordered categories: Negative, Trace, Positive
+    NOM = "Nom"          # unordered categories: E. coli, Yellow
+    ORD_QN = "OrdQn"     # either: "Resistant" or 15 mm
+    NAR = "Nar"          # narrative text
+    MULTI = "Multi"      # several results in one blob
+    DOC = "Doc"          # a document
+    SET = "Set"          # a structured attachment
+
+
+class ValueType(StrEnum):
+    """How the standardized value is represented (mirrors FHIR Observation)."""
+
+    QUANTITY = "QUANTITY"                   # -> valueQuantity
+    CODEABLE_CONCEPT = "CODEABLE_CONCEPT"   # -> valueCodeableConcept
+    STRING = "STRING"                       # -> valueString
+    ABSENT = "ABSENT"                       # -> dataAbsentReason
+
+
+class Comparator(StrEnum):
+    """FHIR Quantity.comparator. A censored result keeps its number AND its sign.
+
+    "<2.0" is 2.0 with comparator "<" -- never 2.0 alone, and never 0.
+    """
+
+    LESS_THAN = "<"
+    LESS_OR_EQUAL = "<="
+    GREATER_THAN = ">"
+    GREATER_OR_EQUAL = ">="
+
+
+class UnitStatus(StrEnum):
+    """How far a raw unit string got towards being a UCUM code."""
+
+    VALID = "UNIT_VALID"                # already a UCUM code
+    NORMALIZED = "UNIT_NORMALIZED"      # spelling fixed; the number is untouched
+    CONVERTED = "UNIT_CONVERTED"        # an approved rule changed the number too
+    MISSING = "UNIT_MISSING"            # no unit given
+    UNKNOWN = "UNIT_UNKNOWN"            # not a unit we have a rule for
+    INCOMPATIBLE = "UNIT_INCOMPATIBLE"  # wrong dimension for this test
+    REVIEW_REQUIRED = "UNIT_REVIEW_REQUIRED"
+
+
+class ValueMappingStatus(StrEnum):
+    """How far a categorical result got towards a coded concept."""
+
+    CODED = "CODED"
+    # Text was recognised and normalised, but no standard code was attached --
+    # because SNOMED CT International is not licensed here. Inventing a code
+    # would be worse than admitting the gap.
+    TEXT_NORMALIZED_CODE_PENDING = "TEXT_NORMALIZED_CODE_PENDING"
+    UNMAPPED = "UNMAPPED"
+
+
+class QualityStatus(StrEnum):
+    """The verdict for one standardized row."""
+
+    OK = "OK"
+    WARNING = "WARNING"        # usable, but something is worth knowing
+    QUARANTINED = "QUARANTINED" # not fit to use; kept, never dropped
+
+
+class ResultIssue(StrEnum):
+    """Named problems. Every one of these is recorded, never silently swallowed."""
+
+    UNKNOWN_ITEMID = "UNKNOWN_ITEMID"
+    NO_LOINC_MAPPING = "NO_LOINC_MAPPING"
+    LOINC_NOT_APPROVED = "LOINC_NOT_APPROVED"
+    LOINC_UNKNOWN_CODE = "LOINC_UNKNOWN_CODE"
+    LOINC_TRIAL = "LOINC_TRIAL"
+
+    MISSING_VALUE = "MISSING_VALUE"
+    NOT_A_NUMBER = "NOT_A_NUMBER"
+    PARSE_ERROR = "PARSE_ERROR"
+    BELOW_DETECTION_LIMIT = "BELOW_DETECTION_LIMIT"
+    ABOVE_DETECTION_LIMIT = "ABOVE_DETECTION_LIMIT"
+    TEXT_RESULT = "TEXT_RESULT"
+    VALUE_NUMERIC_MISMATCH = "VALUE_NUMERIC_MISMATCH"
+    SCALE_MISMATCH = "SCALE_MISMATCH"
+
+    UNIT_MISSING = "UNIT_MISSING"
+    UNIT_UNKNOWN = "UNIT_UNKNOWN"
+    UNIT_INCOMPATIBLE = "UNIT_INCOMPATIBLE"
+    UNIT_CONVERSION_NOT_AVAILABLE = "UNIT_CONVERSION_NOT_AVAILABLE"
+
+    CATEGORICAL_UNMAPPED = "CATEGORICAL_UNMAPPED"
+    CODE_PENDING_LICENCE = "CODE_PENDING_LICENCE"
+
+
+class DataAbsentReason(StrEnum):
+    """FHIR data-absent-reason codes, used instead of inventing a value."""
+
+    UNKNOWN = "unknown"
+    NOT_A_NUMBER = "not-a-number"
+    ERROR = "error"
+
+
+# FHIR observation-interpretation. MIMIC's FLAG only ever means "abnormal";
+# an empty FLAG means nothing was recorded -- it does NOT mean normal.
+INTERPRETATION_ABNORMAL = "A"
+INTERPRETATION_ABNORMAL_DISPLAY = "Abnormal"
+
+# Scales whose answers are categories rather than numbers.
+CATEGORICAL_SCALES: frozenset[str] = frozenset(
+    {LoincScale.ORD.value, LoincScale.NOM.value, LoincScale.SEMI_QN.value}
+)
+
+# Scales that legitimately carry either a number or a category, so no
+# expectation can be imposed on them.
+#
+# SemiQn is here because of what LOINC actually does with it. It covers titres
+# ("1:16") and dipstick grades ("1+"), which are categorical -- but it also
+# covers pH, which is numeric: LOINC models pH as SemiQn with property LsCnc
+# because it is a logarithmic quantity, and LOINC 2.83 contains no quantitative
+# pH code at all. Treating SemiQn as categorical flagged every one of the 1,537
+# real pH results as a mismatch, which was our error and not the data's.
+AMBIGUOUS_SCALES: frozenset[str] = frozenset(
+    {LoincScale.SEMI_QN.value, LoincScale.ORD_QN.value}
+)
+NARRATIVE_SCALES: frozenset[str] = frozenset(
+    {LoincScale.NAR.value, LoincScale.MULTI.value, LoincScale.DOC.value, LoincScale.SET.value}
+)

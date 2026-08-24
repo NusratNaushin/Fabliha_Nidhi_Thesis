@@ -249,6 +249,8 @@ than a JSON blob.
 | Page | What it is for |
 |---|---|
 | **Dashboard** | Which release each terminology is speaking right now, and the last audit's headline numbers |
+| **What happened to the data** | The result pipeline as a five-step funnel, with every issue explained in plain English |
+| **Browse results** | One result at a time, showing what the hospital recorded next to what it became |
 | **Look up a code** | Paste a LOINC code or SNOMED concept id and get the verdict, with the release it was judged against |
 | **Mappings** | Browse and filter the local mappings; open one for its full revision history |
 | **Audit** | Run an audit over any scope, then read the results filtered by decision |
@@ -374,6 +376,75 @@ with a `$lookup` on a code taken from the release you imported.
 | GET | `/api/v1/audits` · `/{id}` · `/{id}/results` · `/{id}/report` | audit runs, results, report |
 
 Full interactive documentation: `http://localhost:8000/docs`.
+
+---
+
+## Standardizing the results themselves
+
+The terminology layer answers *is this code still the right code?* This layer answers the
+question underneath it: *what did the test actually say, and can another system read it?*
+
+```powershell
+# 1. load the raw results (identifiers are pseudonymised at the door)
+.\.venv\Scripts\python.exe scripts\import_mimic_labevents.py --file "<LABEVENTS source>"
+
+# 2. standardize them
+.\.venv\Scripts\python.exe scripts\standardize_mimic_results.py --seed-rules
+
+# 3. write them as FHIR, and check them
+.\.venv\Scripts\python.exe scripts\export_fhir_observations.py --validate
+.\.venv\Scripts\python.exe scripts\validate_standardized_results.py
+```
+
+A raw row like `Sodium | "137" | "mEq/L" | (no flag)` becomes an approved LOINC code that is
+valid today, a value typed as a number, and the UCUM unit `meq/L` — with every step recorded.
+
+### What it will not do
+
+These are not conservative defaults; they are the point of the module.
+
+| It never | Because |
+|---|---|
+| turns `Negative` into `0` | A negative result and a result of zero are different clinical statements, and no arithmetic downstream can tell them apart afterwards. |
+| turns a missing result into `0` | An average over the column would silently include zeros that were never measured. |
+| drops the `<` from `<2.0` | That turns a below-detection-limit reading into a measurement. The number and the sign are both kept. |
+| guess a missing unit | LOINC's example units are *examples*, not a permitted list, so a unit cannot be inferred from the code. |
+| convert a unit without an approved rule | Glucose and creatinine have different molar masses. A blanket "mg/dL to mmol/L" rule would corrupt every creatinine in the dataset. |
+| invent a SNOMED code | With no licence, a recognised value gets normalised **text** and a null code, marked `TEXT_NORMALIZED_CODE_PENDING`. |
+| promote a suggestion to an approval | `engine_suggested_loinc` and `approved_current_loinc` are separate columns and never assigned from one another. |
+| drop a row | Input rows must equal standardized plus quarantined rows. The run fails rather than publishing a table that quietly lost something. |
+
+### Privacy
+
+This is the first part of the project that touches patient-level data, so identifiers stop
+being identifiers at import: `SUBJECT_ID` and `HADM_ID` become keyed HMAC pseudonyms.
+
+A plain hash would not do — a bare SHA-256 of a small integer id is recoverable by trying every
+integer, which for a hundred-patient demo takes moments. The key is what makes it one-way, and
+it lives in `PSEUDONYM_SECRET` in the environment, never in the repository. The scripts refuse
+to run without it. A null `HADM_ID` stays null, because it means an outpatient result — a real
+state, not missing data.
+
+### What comes out
+
+| File | What it is |
+|---|---|
+| `standardized_lab_results.csv` | one row per result, raw and standardized side by side |
+| `standardized_lab_results.ndjson` | the same as FHIR R4 Observations |
+| `result_standardization_issues.csv` | every named problem, with its explanation |
+| `unmapped_lab_items.csv` | tests with no code, with their observed units and example values |
+| `unit_mapping_coverage.md` | which units were recognised, and which have no rule yet |
+| `result_value_mapping_coverage.md` | the same for categorical results |
+| `standardization_summary.md` | the headline numbers |
+| `standardization_manifest.json` | the releases, rule versions and commit the run depended on |
+
+### Three FHIR choices worth knowing
+
+- **`status` is `unknown`.** FHIR requires it; MIMIC does not record whether a result was
+  preliminary or final. Writing `final` would assert something the source never said.
+- **A censored result keeps its comparator** — `valueQuantity` with `value: 2.0` and
+  `comparator: "<"`.
+- **A missing value becomes `dataAbsentReason`**, never a value of zero.
 
 ---
 

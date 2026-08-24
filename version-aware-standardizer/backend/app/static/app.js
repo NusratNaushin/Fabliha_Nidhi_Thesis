@@ -1227,6 +1227,516 @@ $('#themeBtn').addEventListener('click', () => {
 const savedTheme = localStorage.getItem('vas.theme');
 if (savedTheme) document.documentElement.setAttribute('data-theme', savedTheme);
 
+
+/* ==========================================================================
+   Result standardization
+   ==========================================================================
+   The terminology pages answer "is this code still right?". These answer the
+   question underneath it: "what did the test actually say, and can another
+   system read it?"
+
+   The presentation that carries the most meaning here is before-and-after on a
+   single row -- the messy thing the hospital recorded, next to the clean thing
+   it became. A table of percentages tells you the pipeline ran; one row shown
+   both ways tells you what it did. */
+
+const ISSUE_MEANING = {
+  TEXT_RESULT: {
+    tone: 'ok', short: 'a word, not a number',
+    say: 'The result is a category like "Negative" or "Trace". It is kept as text — '
+       + 'turning it into a number would change what it means.',
+  },
+  CODE_PENDING_LICENCE: {
+    tone: 'ok', short: 'wording standardised, code pending',
+    say: 'The wording was standardised, but no standard code was attached, because '
+       + 'SNOMED CT International is not licensed here. Inventing one would be worse '
+       + 'than the gap.',
+  },
+  BELOW_DETECTION_LIMIT: {
+    tone: 'ok', short: 'below what the test can measure',
+    say: 'A result like "<2.0". The number and the "<" are both kept — dropping the '
+       + 'sign would turn a limit into a measurement.',
+  },
+  ABOVE_DETECTION_LIMIT: {
+    tone: 'ok', short: 'above what the test can measure',
+    say: 'A result like ">12000". The number and the ">" are both kept.',
+  },
+  NO_LOINC_MAPPING: {
+    tone: 'warn', short: 'this test was never given a code',
+    say: 'Nobody ever assigned a LOINC code to this test. The value, unit and time are '
+       + 'still standardized and usable — it just cannot be compared with another '
+       + 'system until somebody maps it.',
+  },
+  LOINC_NOT_APPROVED: {
+    tone: 'warn', short: 'the code is no longer right',
+    say: 'The code this test carries has been retired or discouraged. The result is '
+       + 'still standardized, but no approved code is attached until a person decides.',
+  },
+  LOINC_UNKNOWN_CODE: {
+    tone: 'bad', short: 'the code is not in LOINC',
+    say: 'The code on this test does not exist in the current LOINC release at all.',
+  },
+  LOINC_TRIAL: {
+    tone: 'warn', short: 'the code is provisional',
+    say: 'The code is published but still marked TRIAL, so it may change.',
+  },
+  UNIT_MISSING: {
+    tone: 'warn', short: 'no unit was recorded',
+    say: 'The result has a number but no unit. Nothing is guessed — a unit taken from '
+       + 'the LOINC example would often be wrong.',
+  },
+  UNIT_UNKNOWN: {
+    tone: 'warn', short: 'we have no rule for this unit',
+    say: 'The unit is not one we have a rule for, so the value and the original unit '
+       + 'are kept exactly as they arrived and nothing is converted.',
+  },
+  UNIT_INCOMPATIBLE: {
+    tone: 'bad', short: 'that unit cannot belong to this test',
+    say: 'The unit measures a different kind of quantity than the test produces — a '
+       + 'time on a concentration, say. The row is quarantined rather than corrected.',
+  },
+  UNIT_CONVERSION_NOT_AVAILABLE: {
+    tone: 'warn', short: 'no approved conversion',
+    say: 'Converting this unit would change the number, and that needs an approved, '
+       + 'test-specific rule. Without one the original value is kept.',
+  },
+  SCALE_MISMATCH: {
+    tone: 'warn', short: 'the code and the answer disagree',
+    say: 'LOINC says this test produces one kind of answer and the lab reported '
+       + 'another — a numeric code with a worded result, or the reverse. Usually it '
+       + 'means the code chosen for the test is not quite the right one.',
+  },
+  VALUE_NUMERIC_MISMATCH: {
+    tone: 'warn', short: 'the source disagrees with itself',
+    say: 'The text and the numeric column of the source hold different numbers. We '
+       + 'keep the text, because that is what a person wrote down, and flag it.',
+  },
+  MISSING_VALUE: {
+    tone: 'warn', short: 'nothing was recorded',
+    say: 'No result was recorded. It is stored as absent with a reason, never as zero.',
+  },
+  NOT_A_NUMBER: {
+    tone: 'warn', short: 'the test did not produce a result',
+    say: 'The row records something like "NotDone" or "HOLD" — what happened to the '
+       + 'specimen, not a finding. Stored as absent rather than as a result.',
+  },
+  PARSE_ERROR: {
+    tone: 'bad', short: 'the value could not be read',
+    say: 'The value could not be read as anything sensible. It is kept verbatim.',
+  },
+  CATEGORICAL_UNMAPPED: {
+    tone: 'warn', short: 'we do not know this wording',
+    say: 'No rule exists for this text yet, so it is preserved exactly as written and '
+       + 'nothing is assumed about what it means.',
+  },
+  UNKNOWN_ITEMID: {
+    tone: 'bad', short: 'the test is not in the dictionary',
+    say: 'There is no dictionary entry for this test, so there is no way to say what '
+       + 'the result belongs to. The row is quarantined.',
+  },
+};
+
+const VALUE_TYPE_MEANING = {
+  QUANTITY: { tone: 'keep', label: 'a number', say: 'A measured quantity, with a unit.' },
+  CODEABLE_CONCEPT: { tone: 'suggest', label: 'a category', say: 'A word like "Negative" or "1+".' },
+  STRING: { tone: 'warning', label: 'free text', say: 'A sentence, kept as written.' },
+  ABSENT: { tone: 'unknown', label: 'nothing recorded', say: 'No result — stored as absent, never as zero.' },
+  UNDETERMINED: {
+    tone: 'unknown', label: 'could not be read',
+    say: 'Quarantined before the value could be read — usually a test with no dictionary entry.',
+  },
+};
+
+const UNIT_STATUS_MEANING = {
+  UNIT_VALID: 'already a standard UCUM unit',
+  UNIT_NORMALIZED: 'spelling standardised; the number is unchanged',
+  UNIT_CONVERTED: 'an approved rule changed the number too',
+  UNIT_MISSING: 'no unit was recorded',
+  UNIT_UNKNOWN: 'no rule for this unit yet',
+  UNIT_INCOMPATIBLE: 'wrong kind of quantity for this test',
+  UNIT_REVIEW_REQUIRED: 'needs a person to decide',
+};
+
+const QUALITY_MEANING = {
+  OK: { tone: 'keep', label: 'clean', say: 'Nothing worth flagging.' },
+  WARNING: { tone: 'warning', label: 'usable, with a note', say: 'Fine to use, but something is worth knowing.' },
+  QUARANTINED: { tone: 'unknown', label: 'quarantined', say: 'Not fit to use as it stands. Kept, never deleted.' },
+};
+
+const issueInfo = c => ISSUE_MEANING[c] || { tone: 'warn', short: c, say: '' };
+const issueTone = c => ({ ok: 'keep', warn: 'warning', bad: 'unknown' })[issueInfo(c).tone] || 'neutral';
+
+// ------------------------------------------------- what happened to the data
+ROUTES.results = async () => {
+  loading('Reading the last standardization run…');
+  try {
+    const cov = await api('/api/v1/standardization/coverage');
+    const t = cov.terminology || {};
+    const u = cov.units || {};
+    const vt = cov.by_value_type || {};
+    const q = cov.quality || {};
+    const total = cov.input_rows || 1;
+    const share = v => `${((v / total) * 100).toFixed(2)}%`;
+
+    // The funnel is the story: every row starts at the top, and each stage says
+    // how many made it through and what happened to the rest.
+    const funnel = [
+      {
+        label: 'Results came in', n: cov.input_rows, tone: 'ink',
+        say: 'Every raw row from the hospital extract.',
+      },
+      {
+        label: 'Kept, nothing lost', n: cov.input_rows, tone: 'ok',
+        say: cov.rows_accounted_for
+          ? 'Rows in equals rows out. Nothing was silently dropped — that is checked, not assumed.'
+          : 'ROWS DO NOT ADD UP. This is a bug and should be investigated.',
+      },
+      {
+        label: 'The test has a code', n: t.with_any_code, tone: 'ink',
+        say: `${n(t.no_code_at_all)} results are for tests nobody ever assigned a code to.`,
+      },
+      {
+        label: 'The code is still right', n: t.with_approved_code, tone: 'ok',
+        say: `${n(t.present_but_stale)} results carry a code that exists but has been retired `
+           + `or discouraged. That gap is the whole reason this project exists.`,
+      },
+      {
+        label: 'Numbers got a standard unit', n: u.with_ucum, tone: 'ok',
+        say: `Of the ${n(u.numeric_rows)} results that are numbers, `
+           + `${((u.ucum_rate_of_numeric || 0) * 100).toFixed(1)}% ended with a UCUM unit `
+           + `another system can read.`,
+      },
+    ];
+
+    const issueRows = Object.entries(cov.issues || {})
+      .sort((a, b) => b[1] - a[1])
+      .map(([code, count]) => {
+        const info = issueInfo(code);
+        return `<tr>
+          <td><span class="pill ${issueTone(code)}">${h(info.short)}</span></td>
+          <td class="num">${n(count)}</td>
+          <td class="num faint">${share(count)}</td>
+          <td>${h(info.say)}</td>
+          <td class="mono small faint">${h(code)}</td>
+        </tr>`;
+      }).join('');
+
+    view().innerHTML = `<div class="page-head">
+        <h1>What happened to the data</h1>
+        <p class="lede">Every laboratory result from the source, turned into a standard form:
+        the right code, a properly typed value, and a unit another system can read. Run
+        #${cov.run_id}, judged against <b>LOINC ${h(cov.loinc_version || '—')}</b>.</p></div>
+
+      <div class="card">
+        <h2>The journey, in five steps</h2>
+        <p class="hint">Each step shows how many results made it through, and what happened
+          to the ones that did not.</p>
+        ${funnel.map((f, i) => `
+          <div style="display:flex;gap:14px;align-items:flex-start;padding:11px 0${
+            i < funnel.length - 1 ? ';border-bottom:1px solid var(--line-soft)' : ''}">
+            <div style="flex:0 0 132px;text-align:right">
+              <div style="font-size:20px;font-weight:700;color:var(--${f.tone})">${n(f.n)}</div>
+              <div class="faint small">${share(f.n)}</div>
+            </div>
+            <div style="flex:1 1 auto">
+              <b>${h(f.label)}</b>
+              <div class="muted small">${f.say}</div>
+            </div>
+          </div>`).join('')}
+      </div>
+
+      <div class="grid c2">
+        <div class="card mb0">
+          <h2>What kind of answer each result was</h2>
+          <p class="hint">Not every laboratory result is a number, and the ones that are not
+            must not be forced into one.</p>
+          <table class="tbl"><tbody>
+            ${Object.entries(VALUE_TYPE_MEANING).map(([k, v]) => `<tr>
+              <td><span class="pill ${v.tone}">${h(v.label)}</span></td>
+              <td class="num">${n(vt[k] || 0)}</td>
+              <td class="num faint">${share(vt[k] || 0)}</td>
+              <td class="small muted">${h(v.say)}</td>
+            </tr>`).join('')}
+          </tbody></table>
+        </div>
+
+        <div class="card mb0">
+          <h2>How much can be trusted as it stands</h2>
+          <p class="hint">A quarantined row is kept with its reason attached — it is never
+            deleted, because a shorter table that looks fine is the worst outcome.</p>
+          <table class="tbl"><tbody>
+            ${Object.entries(QUALITY_MEANING).map(([k, v]) => `<tr>
+              <td><span class="pill ${v.tone}">${h(v.label)}</span></td>
+              <td class="num">${n(q[k] || 0)}</td>
+              <td class="num faint">${share(q[k] || 0)}</td>
+              <td class="small muted">${h(v.say)}</td>
+            </tr>`).join('')}
+          </tbody></table>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Everything worth knowing about, and how often</h2>
+        <p class="hint">One result can raise more than one of these, so the numbers add up to
+          more than the total. Nothing here was discarded — every count is rows still in the
+          database with their original value intact.</p>
+        <div class="tbl-wrap"><table class="tbl">
+          <thead><tr><th>What it is</th><th class="num">Results</th><th class="num">Share</th>
+            <th>What it means</th><th>Code</th></tr></thead>
+          <tbody>${issueRows || '<tr><td colspan="5" class="empty">Nothing flagged.</td></tr>'}</tbody>
+        </table></div>
+      </div>
+
+      <div class="row">
+        <div class="auto"><a href="#/browse"><button type="button">Look at individual results</button></a></div>
+        <div class="auto"><a href="#/unmapped"><button class="ghost" type="button">Tests with no code</button></a></div>
+      </div>`;
+  } catch (e) {
+    if (e.status === 404) {
+      view().innerHTML = `<div class="page-head"><h1>What happened to the data</h1></div>
+        <div class="card"><div class="empty"><div class="big">🧾</div>
+          <p>No laboratory results have been standardized yet.</p>
+          <p class="small muted">Load them, then standardize them:</p>
+          <pre style="text-align:left;max-width:640px;margin:12px auto">python scripts/import_mimic_labevents.py --file &lt;LABEVENTS source&gt;
+python scripts/standardize_mimic_results.py --seed-rules</pre>
+        </div></div>`;
+      return;
+    }
+    failed(e, 'Could not load the standardization summary');
+  }
+};
+
+// ------------------------------------------------------------ browse results
+ROUTES.browse = async (rest) => {
+  const state = { quality: '', valueType: '', search: '', offset: 0, limit: 25 };
+  if (rest && rest[0]) state.search = decodeURIComponent(rest[0]);
+
+  view().innerHTML = `<div class="page-head">
+      <h1>Browse results</h1>
+      <p class="lede">Each card shows one laboratory result twice: what the hospital
+      recorded, and what it became. Seeing both is the only way to tell whether
+      standardizing changed the meaning.</p></div>
+
+    <div class="card">
+      <div class="row">
+        <div><label class="f" for="bSearch">Search</label>
+          <input type="text" id="bSearch" placeholder="test name, LOINC code or itemid…"
+            value="${h(state.search)}" autocomplete="off"></div>
+        <div class="narrow"><label class="f" for="bQuality">Trust</label>
+          <select id="bQuality"><option value="">All</option>
+            <option value="OK">Clean</option>
+            <option value="WARNING">With a note</option>
+            <option value="QUARANTINED">Quarantined</option></select></div>
+        <div class="narrow"><label class="f" for="bType">Answer</label>
+          <select id="bType"><option value="">All</option>
+            <option value="QUANTITY">A number</option>
+            <option value="CODEABLE_CONCEPT">A category</option>
+            <option value="STRING">Free text</option>
+            <option value="ABSENT">Nothing recorded</option></select></div>
+        <div class="auto"><button id="bGo" type="button">Show</button></div>
+      </div>
+      <p class="hint mt mb0" id="bCount"></p>
+    </div>
+    <div id="bList"></div>
+    <div class="row" id="bPager" hidden>
+      <div class="auto"><button class="quiet" type="button" id="bPrev">← Previous</button></div>
+      <div class="auto"><button class="quiet" type="button" id="bNext">Next →</button></div>
+    </div>`;
+
+  const load = async () => {
+    $('#bList').innerHTML = `<div class="empty"><span class="spin"></span></div>`;
+    try {
+      const params = new URLSearchParams({
+        limit: String(state.limit), offset: String(state.offset),
+      });
+      if (state.quality) params.set('quality', state.quality);
+      if (state.valueType) params.set('value_type', state.valueType);
+      if (state.search) params.set('search', state.search);
+
+      const runs = await api('/api/v1/standardization/runs?limit=1');
+      if (!runs.length) throw Object.assign(new Error('no run'), { status: 404 });
+      const data = await api(`/api/v1/standardization/runs/${runs[0].id}/results?${params}`);
+
+      $('#bCount').innerHTML = data.total
+        ? `${n(data.total)} results match. Showing ${n(data.offset + 1)}–${n(data.offset + data.returned)}.`
+        : 'Nothing matches those filters.';
+      $('#bList').innerHTML = data.results.length
+        ? data.results.map(resultCard).join('')
+        : `<div class="card"><div class="empty"><p>Nothing matches those filters.</p></div></div>`;
+      $('#bPager').hidden = data.total <= state.limit;
+      $('#bPrev').disabled = state.offset === 0;
+      $('#bNext').disabled = state.offset + state.limit >= data.total;
+    } catch (e) {
+      if (e.status === 404) {
+        $('#bList').innerHTML = `<div class="card"><div class="empty"><div class="big">🔬</div>
+          <p>No results have been standardized yet.</p>
+          <a href="#/results"><button type="button">See how to start</button></a></div></div>`;
+        return;
+      }
+      $('#bList').innerHTML = `<div class="note bad"><p>${h(e.message)}</p></div>`;
+    }
+  };
+
+  $('#bGo').addEventListener('click', () => {
+    state.search = $('#bSearch').value.trim();
+    state.quality = $('#bQuality').value;
+    state.valueType = $('#bType').value;
+    state.offset = 0;
+    load();
+  });
+  $('#bSearch').addEventListener('keydown', e => { if (e.key === 'Enter') $('#bGo').click(); });
+  ['#bQuality', '#bType'].forEach(s => $(s).addEventListener('change', () => $('#bGo').click()));
+  $('#bPrev').addEventListener('click', () => {
+    state.offset = Math.max(0, state.offset - state.limit); load();
+  });
+  $('#bNext').addEventListener('click', () => { state.offset += state.limit; load(); });
+
+  load();
+};
+
+function resultCard(r) {
+  const vt = VALUE_TYPE_MEANING[r.value_type] || { tone: 'neutral', label: r.value_type, say: '' };
+  const quality = QUALITY_MEANING[r.quality_status] || { tone: 'neutral', label: r.quality_status };
+
+  const before = `
+    <div style="flex:1 1 280px">
+      <div class="faint small" style="text-transform:uppercase;letter-spacing:.05em">
+        What the hospital recorded</div>
+      <dl class="kv mt">
+        <dt>Test</dt><dd>${h(r.source_label || '—')}
+          ${r.source_fluid ? `<span class="chip">${h(r.source_fluid)}</span>` : ''}</dd>
+        <dt>Value</dt><dd class="mono">${r.raw_value === null || r.raw_value === ''
+          ? '<span class="faint">(nothing)</span>' : h(r.raw_value)}</dd>
+        <dt>Unit</dt><dd class="mono">${r.raw_unit ? h(r.raw_unit) : '<span class="faint">(none)</span>'}</dd>
+        <dt>Code</dt><dd class="mono">${r.original_loinc_code
+          ? h(r.original_loinc_code) : '<span class="faint">(never assigned)</span>'}</dd>
+        <dt>Flag</dt><dd>${r.raw_flag ? h(r.raw_flag) : '<span class="faint">(none)</span>'}</dd>
+      </dl>
+    </div>`;
+
+  let valueOut;
+  if (r.value_type === 'QUANTITY') {
+    valueOut = `<span class="mono" style="font-size:15px">${
+      r.comparator ? `<b>${h(r.comparator)}</b> ` : ''}${h(r.standard_numeric_value)}</span>${
+      r.standard_ucum_unit
+        ? ` <span class="mono">${h(r.standard_ucum_unit)}</span> <span class="chip">UCUM</span>`
+        : ' <span class="faint">no standard unit</span>'}`;
+  } else if (r.value_type === 'ABSENT') {
+    valueOut = `<span class="faint">nothing recorded</span>${
+      r.data_absent_reason ? ` <span class="chip">${h(r.data_absent_reason)}</span>` : ''}`;
+  } else {
+    valueOut = `<span style="font-size:15px">${h(r.normalized_text_value || '—')}</span>${
+      r.coded_value_code
+        ? ` <span class="chip">${h(r.coded_value_code)}</span>`
+        : ' <span class="chip" title="No SNOMED CT licence, so the wording is standardised but no code is attached.">text only</span>'}`;
+  }
+
+  const codeOut = r.approved_current_loinc
+    ? `<a href="#/lookup/LOINC/${encodeURIComponent(r.approved_current_loinc)}" class="mono">${h(r.approved_current_loinc)}</a>
+       <span class="pill keep">valid in ${h(r.current_loinc_version)}</span>`
+    : r.engine_suggested_loinc
+      ? `<span class="faint">none approved</span>
+         <span class="pill suggest">${h(r.engine_suggested_loinc)} proposed</span>`
+      : `<span class="faint">none</span>`;
+
+  const after = `
+    <div style="flex:1 1 280px">
+      <div class="faint small" style="text-transform:uppercase;letter-spacing:.05em">
+        What it became</div>
+      <dl class="kv mt">
+        <dt>Kind</dt><dd><span class="pill ${vt.tone}">${h(vt.label)}</span></dd>
+        <dt>Value</dt><dd>${valueOut}</dd>
+        <dt>Unit</dt><dd class="small muted">${r.unit_status
+          ? h(UNIT_STATUS_MEANING[r.unit_status] || r.unit_status) : '—'}</dd>
+        <dt>Code</dt><dd>${codeOut}</dd>
+        <dt>Reading</dt><dd>${r.interpretation_code === 'A'
+          ? '<span class="pill warning">flagged abnormal</span>'
+          : '<span class="faint">not stated</span>'}</dd>
+      </dl>
+    </div>`;
+
+  const issues = (r.issues || []).map(code => {
+    const info = issueInfo(code);
+    return `<div style="margin-top:6px">
+      <span class="pill ${issueTone(code)}">${h(info.short)}</span>
+      <span class="small muted"> ${h(info.say)}</span></div>`;
+  }).join('');
+
+  return `<div class="card">
+    <div style="display:flex;gap:9px;align-items:center;flex-wrap:wrap;margin-bottom:4px">
+      <b>${h(r.source_label || 'itemid ' + r.itemid)}</b>
+      <span class="pill ${quality.tone}">${h(quality.label)}</span>
+      <span class="chip mono">${h(r.charttime || '')}</span>
+      <span class="chip mono faint" title="Pseudonymised patient key">${h((r.subject_key || '').slice(0, 8))}…</span>
+    </div>
+    <div style="display:flex;gap:26px;flex-wrap:wrap;padding-top:6px">
+      ${before}
+      <div style="flex:0 0 22px;align-self:center;font-size:20px;color:var(--accent)">→</div>
+      ${after}
+    </div>
+    ${issues ? `<div style="margin-top:10px;border-top:1px solid var(--line-soft);padding-top:8px">${issues}</div>` : ''}
+    <div class="mt">
+      <button class="quiet sm" type="button" onclick="showFhir(${r.id})">Show as FHIR</button>
+    </div>
+  </div>`;
+}
+
+window.showFhir = async (id) => {
+  modal('As a FHIR Observation', '<div class="empty"><span class="spin"></span></div>');
+  try {
+    const data = await api(`/api/v1/standardization/results/${id}/fhir`);
+    const problems = data.validation_problems || [];
+    modal('As a FHIR Observation', `
+      <p class="hint">This is what another system would receive. The subject is a pseudonym;
+        nothing here can be traced back to a patient without the key.</p>
+      ${problems.length
+        ? `<div class="note bad"><p>${problems.map(h).join('<br>')}</p></div>`
+        : '<div class="note ok mb0"><p>✔ Valid against the R4 rules this exporter is responsible for.</p></div>'}
+      <pre style="max-height:52vh;overflow:auto">${h(JSON.stringify(data.resource, null, 2))}</pre>`);
+  } catch (e) {
+    modal('As a FHIR Observation', `<div class="note bad"><p>${h(e.message)}</p></div>`);
+  }
+};
+
+// -------------------------------------------------------- tests with no code
+ROUTES.unmapped = async () => {
+  loading('Finding the tests that were never coded…');
+  try {
+    const data = await api('/api/v1/standardization/unmapped?limit=300');
+    view().innerHTML = `<div class="page-head">
+        <h1>Tests with no code</h1>
+        <p class="lede">${n(data.count)} tests in <span class="mono">${h(data.dataset)}</span>
+        have never been given a LOINC code. There is nothing to re-check here — somebody has
+        to choose a code, and the engine will not guess one.</p></div>
+
+      <div class="note"><p>These are ordered by how much data rides on them, because that is
+        what decides which are worth doing first. The units and example values are shown
+        because a person choosing a code needs to see what the test actually produces, not
+        just its name.</p></div>
+
+      <div class="card"><div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Test</th><th>Specimen</th><th class="num">Results</th>
+          <th>Units seen</th><th>Example values</th></tr></thead>
+        <tbody>${data.items.map(i => `<tr>
+          <td>${h(i.label || '')}<div class="faint small mono">${h(i.itemid)}</div></td>
+          <td class="small">${h([i.fluid, i.category].filter(Boolean).join(' · '))}</td>
+          <td class="num">${n(i.result_count)}</td>
+          <td class="small mono">${(i.observed_units || [])
+            .map(([unit, c]) => `${h(unit)} <span class="faint">(${n(c)})</span>`)
+            .join('<br>') || '<span class="faint">—</span>'}</td>
+          <td class="small mono faint">${(i.examples || []).slice(0, 3)
+            .map(e => h(String(e).slice(0, 18))).join(' · ')}</td>
+        </tr>`).join('')}</tbody></table></div></div>`;
+  } catch (e) {
+    if (e.status === 404) {
+      view().innerHTML = `<div class="page-head"><h1>Tests with no code</h1></div>
+        <div class="card"><div class="empty"><p>No laboratory data has been loaded yet.</p></div></div>`;
+      return;
+    }
+    failed(e, 'Could not load the unmapped tests');
+  }
+};
+
 health();
 refreshBadge();
 go();

@@ -14,7 +14,14 @@ from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
-from backend.app.api import audits, loinc, mappings, releases, snomed
+from backend.app.api import (
+    audits,
+    loinc,
+    mappings,
+    releases,
+    snomed,
+    standardized_results,
+)
 from backend.app.config import settings
 from backend.app.database import SessionLocal, engine
 from backend.app.services import release_service
@@ -64,6 +71,7 @@ app.include_router(loinc.router)
 app.include_router(snomed.router)
 app.include_router(mappings.router)
 app.include_router(audits.router)
+app.include_router(standardized_results.router)
 
 
 @app.get("/health", tags=["system"], summary="Database, Snowstorm and release status")

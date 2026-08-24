@@ -43,6 +43,15 @@ class Settings(BaseSettings):
     # association chain (Master Instruction sections 21 and 24).
     max_replacement_chain_depth: int = 10
 
+    # Keys the HMAC that turns a patient identifier into a pseudonym. It has to
+    # come from the environment: committing it would make every pseudonym in
+    # every exported file reversible by anyone holding the repository. An empty
+    # value is not silently tolerated -- the pseudonymiser refuses to start.
+    pseudonym_secret: str = ""
+
+    # Rows are streamed and written in batches of this size.
+    ingest_batch_size: int = 5_000
+
     @property
     def raw_path(self) -> Path:
         p = Path(self.data_raw_dir)
