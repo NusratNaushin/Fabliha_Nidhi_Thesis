@@ -237,6 +237,42 @@ not create a second release. A full SNOMED import into Snowstorm commonly takes 
 
 ---
 
+## The console
+
+Start the API and open **<http://localhost:8000/>** — the bare URL lands on a web console rather
+than a JSON blob.
+
+```powershell
+.\.venv\Scripts\python.exe -m uvicorn backend.app.main:app --reload
+```
+
+| Page | What it is for |
+|---|---|
+| **Dashboard** | Which release each terminology is speaking right now, and the last audit's headline numbers |
+| **Look up a code** | Paste a LOINC code or SNOMED concept id and get the verdict, with the release it was judged against |
+| **Mappings** | Browse and filter the local mappings; open one for its full revision history |
+| **Audit** | Run an audit over any scope, then read the results filtered by decision |
+| **Review queue** | The human half of the loop — the cases the engine declined to decide, with the approval action |
+| **Compare releases** | Two releases side by side, including our diff checked against the release's own change log |
+| **Glossary** | Every machine word the console can show, with the sentence that explains it |
+
+Three things the console does on purpose:
+
+- **No verdict is shown without its release.** A code is not valid or invalid in the abstract; it
+  is valid in a *named* release, so every card carries that name. Hiding it would reintroduce the
+  exact ambiguity this project exists to remove.
+- **The review queue shows the hospital's own test name and specimen**, not just a code. When the
+  engine abstains because "the correct replacement depends on local test context", that context is
+  precisely what the reviewer is being asked to supply.
+- **Approving asks for a name and shows what will be recorded** before it writes anything. The
+  console cannot bypass the safety contract — it calls the same endpoint, with the same checks.
+
+It is plain HTML, CSS and JavaScript served from the app itself: no CDN, no build step, no
+`npm install`. It works with the network cable out, which is the same reason nothing else in this
+project phones home. A test asserts that the page pulls nothing from a third-party origin.
+
+---
+
 ## Everyday use
 
 ```powershell

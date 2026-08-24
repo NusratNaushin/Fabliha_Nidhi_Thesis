@@ -7,8 +7,11 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.responses import RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
 from backend.app.api import audits, loinc, mappings, releases, snomed
@@ -94,11 +97,28 @@ def health() -> dict:
     }
 
 
-@app.get("/", tags=["system"], include_in_schema=False)
-def root() -> dict:
+@app.get("/api", tags=["system"], include_in_schema=False)
+def api_root() -> dict:
     return {
         "name": settings.app_name,
+        "console": "/ui/",
         "docs": "/docs",
         "health": "/health",
         "api": "/api/v1",
     }
+
+
+@app.get("/", tags=["system"], include_in_schema=False)
+def root() -> RedirectResponse:
+    """Land on the console rather than a JSON blob."""
+    return RedirectResponse(url="/ui/")
+
+
+# The console is plain HTML/CSS/JS served from this app: no CDN, no build step,
+# so it works on a machine with the network cable out -- the same reason nothing
+# else in this project phones home.
+_STATIC_DIR = Path(__file__).resolve().parent / "static"
+if _STATIC_DIR.is_dir():
+    app.mount("/ui", StaticFiles(directory=_STATIC_DIR, html=True), name="console")
+else:  # pragma: no cover - only if the package was installed without its assets
+    log.warning("console assets missing at %s; /ui will 404", _STATIC_DIR)

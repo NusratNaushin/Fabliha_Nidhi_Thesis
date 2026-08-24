@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="bn">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Terminology Console</title>
+  <link rel="stylesheet" href="app.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🩺</text></svg>">
+</head>
+<body>
+<div class="app">
+  <aside class="side">
+    <div class="brand">
+      <div class="title">Terminology Console</div>
+      <div class="sub">সংস্করণ-সচেতন LOINC / SNOMED CT যাচাই</div>
+    </div>
+
+    <nav class="nav" id="nav">
+      <div class="group">দেখা</div>
+      <a href="#/dashboard" data-r="dashboard"><span class="ic">📊</span> ড্যাশবোর্ড</a>
+      <a href="#/lookup"    data-r="lookup"><span class="ic">🔎</span> কোড দেখুন</a>
+      <a href="#/mappings"  data-r="mappings"><span class="ic">🔗</span> ম্যাপিং</a>
+
+      <div class="group">যাচাই</div>
+      <a href="#/audit"   data-r="audit"><span class="ic">🧪</span> নিরীক্ষা</a>
+      <a href="#/review"  data-r="review"><span class="ic">🙋</span> সিদ্ধান্তের সারি <span id="reviewBadge" class="chip" hidden></span></a>
+      <a href="#/compare" data-r="compare"><span class="ic">⇄</span> সংস্করণ তুলনা</a>
+
+      <div class="group">সহায়তা</div>
+      <a href="#/releases" data-r="releases"><span class="ic">📦</span> Release তালিকা</a>
+      <a href="#/help"     data-r="help"><span class="ic">❓</span> শব্দের মানে</a>
+    </nav>
+
+    <div class="side-foot">
+      <div id="healthLine">সংযোগ পরীক্ষা করছি <span class="spin"></span></div>
+      <div class="mt">
+        <a href="/docs" target="_blank" rel="noopener">API docs</a> ·
+        <button class="quiet sm" id="themeBtn" type="button" style="padding:2px 8px">থিম</button>
+      </div>
+    </div>
+  </aside>
+
+  <main class="main" id="view">
+    <div class="empty"><div class="big">⏳</div><p>লোড হচ্ছে…</p></div>
+  </main>
+</div>
+
+<div class="toast-host" id="toasts"></div>
+<div id="modalHost"></div>
+
+<script src="app.js"></script>
+</body>
+</html>

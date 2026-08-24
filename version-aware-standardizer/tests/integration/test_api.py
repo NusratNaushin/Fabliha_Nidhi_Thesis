@@ -38,9 +38,49 @@ def test_health_reports_every_dependency(client):
     assert body["releases"]["LOINC"]["version"] == fx.LOINC_NEW_VERSION
 
 
-def test_root_points_at_the_docs(client):
-    body = client.get("/").json()
+def test_root_lands_on_the_console(client):
+    """A person who types the bare URL wants the app, not a JSON blob."""
+    res = client.get("/", follow_redirects=False)
+    assert res.status_code in (302, 307)
+    assert res.headers["location"] == "/ui/"
+
+
+def test_api_root_still_points_at_the_docs(client):
+    body = client.get("/api").json()
     assert body["docs"] == "/docs"
+    assert body["console"] == "/ui/"
+
+
+def test_the_console_is_served_from_the_app_itself(client):
+    """No CDN: the page and its assets must come from this process.
+
+    A console that needs the internet would be useless on the air-gapped
+    machines this kind of terminology work often runs on.
+    """
+    page = client.get("/ui/")
+    assert page.status_code == 200
+    assert "Terminology Console" in page.text
+    # Nothing may be pulled from a third-party origin.
+    assert "http://" not in page.text.replace("http://www.w3.org", "")
+    assert "https://" not in page.text
+
+    for asset in ("/ui/app.css", "/ui/app.js"):
+        res = client.get(asset)
+        assert res.status_code == 200, asset
+        assert len(res.content) > 1000, asset
+
+
+def test_the_console_javascript_explains_every_decision(client):
+    """The UI must not invent a vocabulary the engine does not use."""
+    js = client.get("/ui/app.js").text
+    for decision in (
+        "KEEP",
+        "KEEP_WITH_WARNING",
+        "SUGGEST_REPLACEMENT",
+        "MANUAL_REVIEW",
+        "UNKNOWN_CODE",
+    ):
+        assert decision in js, decision
 
 
 def test_openapi_schema_builds(client):
@@ -291,3 +331,69 @@ def test_audit_does_not_change_the_mapping(client, full_session):
     mapping = mapping_service.get_mapping(full_session, mapping_id)
     full_session.refresh(mapping)
     assert mapping.target_code == fx.L_DEP_ONE
+
+
+# ---------------------------------------------------------------------------
+# GET /api/v1/releases/diff
+# ---------------------------------------------------------------------------
+def test_diff_reproduces_the_official_change_snapshot(client):
+    """The endpoint's whole point is the validation block, not the counts."""
+    res = client.get(
+        f"/api/v1/releases/diff?system=LOINC"
+        f"&old={fx.LOINC_OLD_VERSION}&new={fx.LOINC_NEW_VERSION}"
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["system"] == "LOINC"
+    assert body["old_version"] == fx.LOINC_OLD_VERSION
+    assert body["new_version"] == fx.LOINC_NEW_VERSION
+    assert body["removed_codes"] == 0, "LOINC never deletes a code"
+    assert body["new_codes"] >= 1
+
+    v = body["validation"]
+    assert v["official_changes"] > 0, "a vacuous comparison proves nothing"
+    assert v["missed_changes"] == 0
+    assert v["unexpected_changes"] == 0
+
+
+def test_diff_accepts_the_spellings_people_type(client):
+    res = client.get(
+        f"/api/v1/releases/diff?system=snomed"
+        f"&old={fx.SNOMED_OLD_VERSION}&new={fx.SNOMED_NEW_VERSION}"
+    )
+    assert res.status_code == 200
+    assert res.json()["system"] == "SNOMED_CT"
+
+
+def test_diff_refuses_an_unknown_terminology(client):
+    res = client.get("/api/v1/releases/diff?system=ICD10&old=1&new=2")
+    assert res.status_code == 422
+    assert "ICD10" in res.json()["detail"]
+
+
+def test_diff_refuses_comparing_a_release_with_itself(client):
+    v = fx.LOINC_NEW_VERSION
+    res = client.get(f"/api/v1/releases/diff?system=LOINC&old={v}&new={v}")
+    assert res.status_code == 422
+    assert "different" in res.json()["detail"]
+
+
+def test_diff_names_what_is_available_when_a_release_is_missing(client):
+    res = client.get(
+        f"/api/v1/releases/diff?system=LOINC&old=0.01&new={fx.LOINC_NEW_VERSION}"
+    )
+    assert res.status_code == 404
+    detail = res.json()["detail"]
+    assert "0.01" in detail
+    assert fx.LOINC_NEW_VERSION in detail, "tell the caller what they could have asked for"
+
+
+def test_diff_is_cached_but_stays_correct(client):
+    """Releases are immutable, so the same pair may be served from cache."""
+    url = (
+        f"/api/v1/releases/diff?system=LOINC"
+        f"&old={fx.LOINC_OLD_VERSION}&new={fx.LOINC_NEW_VERSION}"
+    )
+    first = client.get(url).json()
+    second = client.get(url).json()
+    assert first == second

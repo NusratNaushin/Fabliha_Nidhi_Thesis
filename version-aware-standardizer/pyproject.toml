@@ -34,6 +34,11 @@ dev = [
 where = ["."]
 include = ["backend*"]
 
+# The console is plain files, not Python modules, so they have to be named
+# explicitly or an installed copy would serve a 404 at /ui.
+[tool.setuptools.package-data]
+"backend.app" = ["static/*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]

@@ -38,7 +38,8 @@ class ReleaseNotFoundError(RuntimeError):
     pass
 
 
-def _normalise_system(system: str) -> str:
+def normalise_system(system: str) -> str:
+    """Accept the spellings people actually type and return the canonical one."""
     value = system.strip().upper().replace("-", "_").replace(" ", "_")
     if value in {"SNOMED", "SNOMEDCT", "SNOMED_CT"}:
         return TerminologySystem.SNOMED_CT.value
@@ -55,7 +56,7 @@ def find_by_checksum(
 ) -> TerminologyRelease | None:
     return session.scalar(
         select(TerminologyRelease).where(
-            TerminologyRelease.system == _normalise_system(system),
+            TerminologyRelease.system == normalise_system(system),
             TerminologyRelease.sha256 == sha256,
         )
     )
@@ -66,7 +67,7 @@ def find_by_version(
 ) -> TerminologyRelease | None:
     return session.scalar(
         select(TerminologyRelease).where(
-            TerminologyRelease.system == _normalise_system(system),
+            TerminologyRelease.system == normalise_system(system),
             TerminologyRelease.version == version,
         )
     )
@@ -75,7 +76,7 @@ def find_by_version(
 def get_current(session: Session, system: str) -> TerminologyRelease | None:
     return session.scalar(
         select(TerminologyRelease).where(
-            TerminologyRelease.system == _normalise_system(system),
+            TerminologyRelease.system == normalise_system(system),
             TerminologyRelease.is_current.is_(True),
         )
     )
@@ -85,7 +86,7 @@ def require_current(session: Session, system: str) -> TerminologyRelease:
     release = get_current(session, system)
     if release is None:
         raise ReleaseNotFoundError(
-            f"No current {_normalise_system(system)} release has been imported. "
+            f"No current {normalise_system(system)} release has been imported. "
             f"Import one with scripts/import_loinc.py or scripts/import_snomed.py."
         )
     return release
@@ -96,7 +97,7 @@ def list_releases(session: Session, system: str | None = None) -> list[Terminolo
         TerminologyRelease.system, TerminologyRelease.imported_at.desc()
     )
     if system:
-        stmt = stmt.where(TerminologyRelease.system == _normalise_system(system))
+        stmt = stmt.where(TerminologyRelease.system == normalise_system(system))
     return list(session.scalars(stmt))
 
 
@@ -117,7 +118,7 @@ def register_release(
     possibly renamed) or the version string is already registered.  The caller
     decides whether that is fatal or a benign "already imported" skip.
     """
-    system = _normalise_system(system)
+    system = normalise_system(system)
     version = version.strip()
     if not version:
         raise ValueError("Release version must be a non-empty string.")
@@ -216,3 +217,7 @@ def current_versions(session: Session) -> dict[str, dict[str, str | None]]:
             }
         )
     return out
+
+
+# Kept so existing call sites and tests that used the private name still work.
+_normalise_system = normalise_system
