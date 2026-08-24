@@ -1,0 +1,57 @@
+# --- Python ---
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+.mypy_cache/
+*.egg-info/
+
+# --- Secrets / local config ---
+.env
+.env.local
+
+# --- Licensed terminology content: NEVER commit ---
+# Keep the folder structure, ignore everything that lands in it.
+data/raw/*
+!data/raw/.gitkeep
+!data/raw/loinc/
+!data/raw/snomed/
+!data/raw/validation/
+data/raw/loinc/*
+!data/raw/loinc/.gitkeep
+data/raw/snomed/*
+!data/raw/snomed/.gitkeep
+data/raw/validation/*
+!data/raw/validation/.gitkeep
+
+# --- Generated reports ---
+data/reports/*
+!data/reports/.gitkeep
+
+# --- Archives of any kind ---
+*.zip
+*.gz
+*.tgz
+*.tar
+
+# --- Local databases ---
+*.db
+*.sqlite
+*.sqlite3
+
+# --- Third-party tools fetched on demand (HAPI FHIR CLI) ---
+tools/
+
+# --- Snowstorm infrastructure (cloned separately, holds ES data) ---
+infra/snowstorm/
+elasticsearch-data/
+
+# --- OS / editors ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

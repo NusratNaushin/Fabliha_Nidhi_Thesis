@@ -1,0 +1,10 @@
+ITEMID,LABEL,FLUID,CATEGORY,LOINC_CODE
+90001,Hepatitis B surface antigen,Serum,Chemistry,11111-1
+90002,Investigational marker,Serum,Chemistry,22222-2
+90003,Glucose legacy,Serum,Chemistry,33333-3
+90004,Electrolyte legacy,Serum,Chemistry,44444-4
+90005,Retired assay,Serum,Chemistry,55555-5
+90006,Abandoned assay,Serum,Chemistry,66666-6
+90007,Haemoglobin,Blood,Hematology,12121-2
+90008,Unmapped local test,Serum,Chemistry,
+90009,Typo in the code,Serum,Chemistry,00000-0

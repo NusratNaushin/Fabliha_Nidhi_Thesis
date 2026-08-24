@@ -1,0 +1,130 @@
+name: CI
+
+# Reproducibility is a stated goal of this project, so the test suite runs on a
+# clean machine on every push -- against SQLite (no services needed) and against
+# a real PostgreSQL 16, because the schema has to work on both.
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: tests (py${{ matrix.python-version }}, ${{ matrix.database }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+        database: [sqlite]
+        include:
+          - python-version: "3.12"
+            database: postgres
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: terminology
+          POSTGRES_USER: terminology
+          POSTGRES_PASSWORD: terminology
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U terminology -d terminology"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Apply migrations
+        env:
+          DATABASE_URL: ${{ matrix.database == 'postgres' && 'postgresql+psycopg://terminology:terminology@localhost:5432/terminology' || 'sqlite:///./ci.db' }}
+        run: python -m alembic upgrade head
+
+      - name: Verify the database and schema
+        env:
+          DATABASE_URL: ${{ matrix.database == 'postgres' && 'postgresql+psycopg://terminology:terminology@localhost:5432/terminology' || 'sqlite:///./ci.db' }}
+        run: python scripts/check_database.py
+
+      # The suite builds its own throwaway schema. On the postgres leg it is
+      # pointed at the real server, so the identical tests run on both backends
+      # -- the schema is only portable if that is proved, not asserted.
+      - name: Run tests with coverage
+        env:
+          VAS_TEST_DATABASE_URL: ${{ matrix.database == 'postgres' && 'postgresql+psycopg://terminology:terminology@localhost:5432/terminology' || '' }}
+        run: >-
+          python -m pytest -q
+          --cov=backend/app
+          --cov-report=term-missing
+          --cov-report=xml
+          --cov-fail-under=85
+
+      - name: Resolver coverage gate
+        run: python scripts/check_coverage.py --min-overall 85 --min-core 95
+
+      - name: End-to-end demo on synthetic releases
+        run: python scripts/demo_end_to_end.py
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-py${{ matrix.python-version }}-${{ matrix.database }}
+          path: coverage.xml
+          if-no-files-found: ignore
+
+  licence-guard:
+    name: no terminology archives, secrets or hard-coded versions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Refuse committed terminology archives
+        run: |
+          set -euo pipefail
+          if git ls-files | grep -Ei '\.(zip|gz|tgz)$'; then
+            echo "::error::A terminology archive appears to be committed. LOINC and SNOMED CT content must never enter this repository."
+            exit 1
+          fi
+          echo "No archives committed."
+
+      - name: Refuse a committed .env
+        run: |
+          set -euo pipefail
+          if git ls-files | grep -qx '.env'; then
+            echo "::error::.env is committed; it may contain credentials."
+            exit 1
+          fi
+          echo "No .env committed."
+
+      - name: Refuse hard-coded terminology release identifiers
+        run: |
+          set -euo pipefail
+          # Hard Rules 1-3: a release version must never be baked into logic.
+          # Docstrings and argparse help= text may cite one as an example, and
+          # are excluded structurally rather than by pattern.
+          python -m pip install --quiet --upgrade pip
+          python scripts/check_no_hardcoded_versions.py

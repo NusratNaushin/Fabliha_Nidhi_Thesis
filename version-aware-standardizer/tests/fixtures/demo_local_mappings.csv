@@ -1,0 +1,15 @@
+source_dataset,local_code,local_text,fluid,category,target_system,target_code,mapped_against_version,map_correlation,note
+MANUAL_TEST,LT-001,HBsAg screen,Serum,Serology,LOINC,11111-1,9.01,EXACT_MATCH,active LOINC - expect KEEP
+MANUAL_TEST,LT-002,Experimental panel,Serum,Chemistry,LOINC,22222-2,9.01,EXACT_MATCH,TRIAL LOINC - expect KEEP_WITH_WARNING
+MANUAL_TEST,LT-003,Legacy glucose,Serum,Chemistry,LOINC,33333-3,9.01,EXACT_MATCH,discouraged with ONE MapTo - expect SUGGEST_REPLACEMENT
+MANUAL_TEST,LT-004,Legacy electrolyte,Serum,Chemistry,LOINC,44444-4,9.01,NARROW_TO_BROAD,discouraged with TWO MapTo - expect MANUAL_REVIEW
+MANUAL_TEST,LT-005,Retired assay,Serum,Chemistry,LOINC,55555-5,9.01,EXACT_MATCH,deprecated with ONE MapTo - expect SUGGEST_REPLACEMENT
+MANUAL_TEST,LT-006,Abandoned assay,Serum,Chemistry,LOINC,66666-6,9.01,EXACT_MATCH,deprecated with NO MapTo - expect MANUAL_REVIEW
+MANUAL_TEST,LT-007,Haemoglobin,Blood,Haematology,LOINC,12121-2,9.01,EXACT_MATCH,metadata drift only - expect KEEP + metadata_changed
+MANUAL_TEST,LT-008,Typo code,Serum,Chemistry,LOINC,00000-0,9.01,NOT_SPECIFIED,fake code - expect UNKNOWN_CODE
+MANUAL_TEST,ST-001,Organism isolated,Blood,Microbiology,SNOMED_CT,100000001,29990101,EXACT_MATCH,active SNOMED - expect KEEP
+MANUAL_TEST,ST-002,Superseded finding,Blood,Microbiology,SNOMED_CT,100000002,29990101,EXACT_MATCH,inactive + REPLACED BY - expect SUGGEST_REPLACEMENT
+MANUAL_TEST,ST-003,Renamed finding,Blood,Microbiology,SNOMED_CT,100000003,29990101,EXACT_MATCH,inactive + SAME AS - expect SUGGEST_REPLACEMENT
+MANUAL_TEST,ST-004,Ambiguous finding,Blood,Microbiology,SNOMED_CT,100000004,29990101,NOT_SPECIFIED,inactive + POSSIBLY EQUIVALENT TO - expect MANUAL_REVIEW
+MANUAL_TEST,ST-005,Orphaned finding,Blood,Microbiology,SNOMED_CT,100000008,29990101,NOT_SPECIFIED,inactive + no association - expect MANUAL_REVIEW
+MANUAL_TEST,ST-006,Fake concept,Blood,Microbiology,SNOMED_CT,123456789,29990101,NOT_SPECIFIED,fake concept id - expect UNKNOWN_CODE

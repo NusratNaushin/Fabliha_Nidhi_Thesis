@@ -1,0 +1,23 @@
+# PostgreSQL for the Version-Aware Clinical Terminology Standardizer.
+# Snowstorm + Elasticsearch live in their own stack: infra/snowstorm/docker-compose.yml
+services:
+  postgres:
+    image: postgres:16
+    container_name: vas-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-terminology}
+      POSTGRES_USER: ${POSTGRES_USER:-terminology}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-terminology}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - vas-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-terminology} -d ${POSTGRES_DB:-terminology}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  vas-pgdata:
