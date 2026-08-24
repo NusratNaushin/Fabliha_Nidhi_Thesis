@@ -252,9 +252,13 @@ than a JSON blob.
 | **Look up a code** | Paste a LOINC code or SNOMED concept id and get the verdict, with the release it was judged against |
 | **Mappings** | Browse and filter the local mappings; open one for its full revision history |
 | **Audit** | Run an audit over any scope, then read the results filtered by decision |
-| **Review queue** | The human half of the loop — the cases the engine declined to decide, with the approval action |
+| **Needs your decision** | The human half of the loop — the cases the engine declined to decide, with the approval action |
 | **Compare releases** | Two releases side by side, including our diff checked against the release's own change log |
-| **Glossary** | Every machine word the console can show, with the sentence that explains it |
+| **What the words mean** | A worked example, then every machine word the console can show with the sentence that explains it |
+
+The interface is written for someone who has never heard of LOINC: the dashboard opens with a
+four-line explanation of the whole idea, every verdict is a sentence rather than an enum, and the
+glossary starts with a worked example instead of a table.
 
 Three things the console does on purpose:
 

@@ -193,6 +193,10 @@ input:focus, select:focus, textarea:focus {
 .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; }
 .row > * { flex: 1 1 165px; min-width: 0; }
 .row > .narrow { flex: 0 0 120px; }
+.row > .wide-narrow { flex: 0 0 200px; }
+/* Let a control size to its own content -- buttons whose label is a
+   sentence should not be forced to wrap inside a 120px box. */
+.row > .auto { flex: 0 0 auto; }
 
 button {
   padding: 8px 15px; border-radius: 6px; border: 1px solid var(--accent);

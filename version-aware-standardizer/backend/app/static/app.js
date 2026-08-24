@@ -4,7 +4,12 @@
    The one idea the whole UI is built around: a verdict is never shown as a bare
    code. It always carries the status, the decision, the release it was judged
    against, and a sentence saying what that means -- because a decision without
-   its release is exactly the ambiguity this project exists to remove. */
+   its release is exactly the ambiguity this project exists to remove.
+
+   The writing rule for everything a person reads here: say what happened, then
+   say why it matters. Never make someone look up a word to understand a
+   sentence. Introduce a technical term once, in context, and only where the
+   plain word would be less precise. */
 
 'use strict';
 
@@ -20,6 +25,7 @@ function h(s) {
 const n = v => (v === null || v === undefined || v === '') ? '—' : Number(v).toLocaleString('en-US');
 const pct = v => (v === null || v === undefined) ? '—' : (v * 100).toFixed(2) + '%';
 const dash = v => (v === null || v === undefined || v === '') ? '<span class="faint">—</span>' : h(v);
+const plural = (c, one, many) => `${n(c)} ${c === 1 ? one : (many || one + 's')}`;
 
 function when(iso) {
   if (!iso) return '—';
@@ -57,84 +63,91 @@ function toast(msg, kind = '') {
 function modal(title, inner) {
   const host = $('#modalHost');
   host.innerHTML = `<div class="modal-host" id="mh"><div class="modal">
-      <button class="quiet sm close" onclick="closeModal()">বন্ধ</button>
+      <button class="quiet sm close" onclick="closeModal()">Close</button>
       <h3>${title}</h3>${inner}</div></div>`;
   $('#mh').addEventListener('click', e => { if (e.target.id === 'mh') closeModal(); });
 }
 function closeModal() { $('#modalHost').innerHTML = ''; }
 window.closeModal = closeModal;
 
-function loading(msg = 'লোড হচ্ছে…') {
+function loading(msg = 'Loading…') {
   view().innerHTML = `<div class="empty"><span class="spin"></span><p>${h(msg)}</p></div>`;
 }
 
 function failed(err, what) {
-  view().innerHTML = `<div class="page-head"><h1>কিছু একটা ভুল হলো</h1></div>
+  view().innerHTML = `<div class="page-head"><h1>That didn't work</h1></div>
     <div class="note bad"><p><b>${h(what)}</b></p><p class="mono">${h(err.message)}</p>
-    ${err.status === 503 ? '<p>সাধারণত এর মানে দরকারি একটা release এখনো import করা হয়নি।</p>' : ''}</div>`;
+    ${err.status === 503
+      ? '<p>This usually means a terminology release has not been loaded yet. '
+        + 'Check <a href="#/releases">Versions loaded</a>.</p>' : ''}</div>`;
 }
 
-// ------------------------------------------------------- the vocabulary
-// Every machine word the API can return, with the plain sentence that explains
-// it. Kept in one place so the UI can never invent a meaning of its own.
+// ------------------------------------------------------------ the vocabulary
+// Every machine word the API can return, paired with the plain sentence that
+// explains it. Kept in one place so the interface can never quietly invent a
+// meaning the engine does not actually hold.
 const DECISION = {
   KEEP: {
-    tone: 'keep', bn: 'ঠিক আছে', en: 'KEEP',
-    say: 'কোডটি বর্তমান release-এ এখনো বৈধ। কিছু করার নেই।',
+    tone: 'keep', label: 'Still valid', api: 'KEEP',
+    say: 'This code is still good in the current release. Nothing to do.',
   },
   KEEP_WITH_WARNING: {
-    tone: 'warning', bn: 'রাখুন, তবে সতর্কতা', en: 'KEEP_WITH_WARNING',
-    say: 'কোডটি TRIAL — পরীক্ষামূলক। ব্যবহার করা যায়, কিন্তু ভবিষ্যতে বদলাতে পারে।',
+    tone: 'warning', label: 'Valid, but provisional', api: 'KEEP_WITH_WARNING',
+    say: 'This code is marked TRIAL — published, but still provisional and liable to '
+       + 'change. Safe to keep using; worth knowing about.',
   },
   SUGGEST_REPLACEMENT: {
-    tone: 'suggest', bn: 'একটি official বিকল্প আছে', en: 'SUGGEST_REPLACEMENT',
-    say: 'terminology নিজেই ঠিক একটি উত্তরসূরি ঘোষণা করেছে। যন্ত্র সেটি প্রস্তাব করছে — '
-       + 'কিন্তু নিজে থেকে বদলাবে না; একজন মানুষকে অনুমোদন দিতে হবে।',
+    tone: 'suggest', label: 'Replacement available', api: 'SUGGEST_REPLACEMENT',
+    say: 'This code should no longer be used, and the terminology itself names exactly '
+       + 'one successor. We can propose it — but nothing changes until a person approves it.',
   },
   MANUAL_REVIEW: {
-    tone: 'review', bn: 'মানুষ দেখুন', en: 'MANUAL_REVIEW',
-    say: 'যন্ত্র ইচ্ছাকৃতভাবে সিদ্ধান্ত নেয়নি। অনুমান করার চেয়ে হাত তুলে দেওয়া নিরাপদ।',
+    tone: 'review', label: 'Needs a person', api: 'MANUAL_REVIEW',
+    say: 'We deliberately did not decide. When there is more than one honest answer, '
+       + 'guessing is worse than asking.',
   },
   UNKNOWN_CODE: {
-    tone: 'unknown', bn: 'কোডটি চেনা গেল না', en: 'UNKNOWN_CODE',
-    say: 'বর্তমান release-এ এই কোডটি নেই। টাইপো, অন্য terminology, বা কখনো বৈধ ছিল না।',
+    tone: 'unknown', label: 'Not recognised', api: 'UNKNOWN_CODE',
+    say: 'This code is not in the current release at all — usually a typo, a code from a '
+       + 'different terminology, or one that was never valid.',
   },
 };
 
 const STATUS = {
-  CURRENT_VALID:  { tone: 'keep',    bn: 'বৈধ' },
-  CURRENT_TRIAL:  { tone: 'warning', bn: 'পরীক্ষামূলক (TRIAL)' },
-  DISCOURAGED:    { tone: 'warning', bn: 'নিরুৎসাহিত' },
-  DEPRECATED:     { tone: 'unknown', bn: 'পরিত্যক্ত' },
-  INACTIVE:       { tone: 'unknown', bn: 'নিষ্ক্রিয়' },
-  UNKNOWN:        { tone: 'unknown', bn: 'অজানা' },
+  CURRENT_VALID: { tone: 'keep', label: 'Active', say: 'Fine to use for new mappings.' },
+  CURRENT_TRIAL: { tone: 'warning', label: 'Trial', say: 'Published but provisional; it may still change.' },
+  DISCOURAGED: { tone: 'warning', label: 'Discouraged', say: 'Still resolves, but you are asked not to use it any more.' },
+  DEPRECATED: { tone: 'unknown', label: 'Retired', say: 'Withdrawn. Never use it for a new mapping.' },
+  INACTIVE: { tone: 'unknown', label: 'Inactive', say: 'Switched off in SNOMED CT; not for new data entry.' },
+  UNKNOWN: { tone: 'unknown', label: 'Not found', say: 'Absent from the current release.' },
 };
 
 const REASON = {
-  STATUS_ACTIVE: 'বর্তমান release-এ ACTIVE।',
-  STATUS_TRIAL: 'বর্তমান release-এ TRIAL।',
-  SINGLE_OFFICIAL_REPLACEMENT: 'ঠিক একটি official বিকল্প ঘোষিত আছে।',
-  MULTIPLE_REPLACEMENTS: 'একাধিক official বিকল্প আছে — কোনটি ঠিক তা স্থানীয় প্রেক্ষাপটের উপর নির্ভর করে।',
-  NO_OFFICIAL_REPLACEMENT: 'কোনো official বিকল্প ঘোষণা করা হয়নি।',
-  NO_HISTORICAL_ASSOCIATION: 'নিষ্ক্রিয়, কিন্তু কোনো সক্রিয় historical association নেই।',
-  AMBIGUOUS_ASSOCIATION_TYPE: 'association-এর ধরনটি নিরাপদ প্রতিস্থাপনের জন্য যথেষ্ট নিশ্চিত নয়।',
-  REPLACEMENT_TARGET_NOT_CURRENT: 'প্রস্তাবিত লক্ষ্যটি নিজেই আর বৈধ নয়।',
-  REPLACEMENT_CHAIN_CYCLE: 'বিকল্পের শৃঙ্খল চক্রে ঘুরছে।',
-  REPLACEMENT_CHAIN_TOO_DEEP: 'শৃঙ্খল নিরাপদ সীমার চেয়ে গভীর।',
-  CODE_NOT_IN_CURRENT_RELEASE: 'বর্তমান release-এ কোডটি নেই।',
-  NO_CURRENT_RELEASE: 'এই terminology-র কোনো release import করা হয়নি।',
-  MOVED_TO_OTHER_NAMESPACE: 'অন্য namespace-এ সরানো হয়েছে — এটি ক্লিনিক্যাল বিকল্প নয়।',
+  STATUS_ACTIVE: 'It is active in the current release.',
+  STATUS_TRIAL: 'It is marked TRIAL in the current release.',
+  SINGLE_OFFICIAL_REPLACEMENT: 'Exactly one official replacement is published.',
+  MULTIPLE_REPLACEMENTS: 'Several official replacements exist, and which one is right '
+    + 'depends on how your lab actually runs the test.',
+  NO_OFFICIAL_REPLACEMENT: 'No replacement has been published at all — someone has to find one.',
+  NO_HISTORICAL_ASSOCIATION: 'It is inactive, and no successor has been declared for it.',
+  AMBIGUOUS_ASSOCIATION_TYPE: 'The relationship published for it is not definite enough to '
+    + 'treat as a replacement.',
+  REPLACEMENT_TARGET_NOT_CURRENT: 'The proposed successor is itself no longer valid.',
+  REPLACEMENT_CHAIN_CYCLE: 'The chain of replacements loops back on itself.',
+  REPLACEMENT_CHAIN_TOO_DEEP: 'The chain of replacements runs deeper than we will follow safely.',
+  CODE_NOT_IN_CURRENT_RELEASE: 'The code does not appear in the current release.',
+  NO_CURRENT_RELEASE: 'No release of this terminology has been loaded yet.',
+  MOVED_TO_OTHER_NAMESPACE: 'It was moved to a different namespace — an administrative move, '
+    + 'not a clinical replacement.',
 };
 
-const dec = d => DECISION[d] || { tone: 'neutral', bn: d, en: d, say: '' };
-const stat = s => STATUS[s] || { tone: 'neutral', bn: s };
-const pill = (d) => `<span class="pill ${dec(d).tone}"><span class="dot"></span>${h(dec(d).bn)}</span>`;
-const statPill = (s) => `<span class="pill ${stat(s).tone}">${h(stat(s).bn)}</span>`;
+const dec = d => DECISION[d] || { tone: 'neutral', label: d, api: d, say: '' };
+const stat = s => STATUS[s] || { tone: 'neutral', label: s, say: '' };
+const pill = d => `<span class="pill ${dec(d).tone}"><span class="dot"></span>${h(dec(d).label)}</span>`;
+const statPill = s => `<span class="pill ${stat(s).tone}" title="${h(stat(s).say)}">${h(stat(s).label)}</span>`;
+const sysName = s => (s === 'SNOMED_CT' ? 'SNOMED CT' : s);
 
-// ------------------------------------------------------------------ state
-const state = { health: null, releases: null, runs: null };
-
-// ------------------------------------------------------------------ router
+// ------------------------------------------------------------------- router
 const ROUTES = {};
 function go() {
   const raw = (location.hash || '#/dashboard').replace(/^#\/?/, '');
@@ -147,6 +160,33 @@ function go() {
 }
 window.addEventListener('hashchange', go);
 
+// =============================================================== the primer
+// Shown once, at the top of the dashboard, for someone who has never met this
+// before. The dismissed flag lives in the browser, not the database -- it is a
+// convenience, not a fact about the work.
+function primer() {
+  if (localStorage.getItem('vas.primerDismissed') === '1') return '';
+  return `<div class="card" id="primer" style="border-inline-start:4px solid var(--accent)">
+    <button class="quiet sm" style="float:inline-end" onclick="dismissPrimer()">Got it</button>
+    <h2>New here? The whole idea, in four lines.</h2>
+    <ol class="mb0">
+      <li>Hospitals give every lab test a <b>standard code</b> so different systems can
+        understand each other. LOINC names the tests; SNOMED CT names the findings.</li>
+      <li>Those code lists are <b>republished regularly</b>, and codes get retired. But a
+        retired code is never deleted — so it keeps working, quietly, long after it stopped
+        being the right answer.</li>
+      <li>This tool takes the mappings you already have and <b>re-checks every one against
+        the release that is current today</b>.</li>
+      <li>Where there is one official replacement, it says so. Where there is any doubt, it
+        <b>stops and asks you</b> — and it never changes a code on its own.</li>
+    </ol>
+  </div>`;
+}
+window.dismissPrimer = () => {
+  localStorage.setItem('vas.primerDismissed', '1');
+  const el = $('#primer'); if (el) el.remove();
+};
+
 // ================================================================= DASHBOARD
 ROUTES.dashboard = async () => {
   loading();
@@ -154,114 +194,123 @@ ROUTES.dashboard = async () => {
     const [health, releases, runs] = await Promise.all([
       api('/health'), api('/api/v1/releases'), api('/api/v1/audits?limit=5'),
     ]);
-    state.health = health; state.releases = releases; state.runs = runs;
 
     const cur = health.releases || {};
     const run = runs[0];
     const s = run && run.summary_json ? run.summary_json : null;
 
-    let head = `<div class="page-head">
-      <h1>ড্যাশবোর্ড</h1>
-      <p class="lede">এই মুহূর্তে সিস্টেম কোন terminology সংস্করণে কথা বলছে, আর
-      সর্বশেষ নিরীক্ষা কী বলেছে।</p></div>`;
+    const head = `<div class="page-head">
+      <h1>Dashboard</h1>
+      <p class="lede">Which terminology versions this system is speaking right now, and what
+      the last check found.</p></div>`;
 
-    // -- releases in force
     let rel = '<div class="grid c2">';
-    for (const sys of ['LOINC', 'SNOMED_CT']) {
+    for (const [sys, title, blurb] of [
+      ['LOINC', 'LOINC', 'Codes for laboratory tests and measurements.'],
+      ['SNOMED_CT', 'SNOMED CT', 'Codes for clinical findings, organisms and procedures.'],
+    ]) {
       const r = cur[sys];
       rel += `<div class="card mb0">
-        <h2>${sys === 'LOINC' ? 'LOINC' : 'SNOMED CT'}</h2>
+        <h2>${title}</h2>
+        <p class="hint">${blurb}</p>
         ${r ? `<div class="stat" style="border:0;padding:0">
             <div class="n">${h(r.version)}</div>
-            <div class="k">${r.effective_date ? 'কার্যকর ' + h(r.effective_date) : 'কার্যকর তারিখ দেওয়া নেই'}</div>
+            <div class="k">${r.effective_date
+              ? 'in force since ' + h(r.effective_date)
+              : 'no effective date published'}</div>
           </div>
           <dl class="kv mt">
-            <dt>ফাইল</dt><dd class="mono small">${h(r.source_filename)}</dd>
-            <dt>import</dt><dd>${when(r.imported_at)}</dd>
-            <dt>অবস্থা</dt><dd>${h(r.import_status)}</dd>
-            <dt>SHA-256</dt><dd class="mono small faint">${h(r.sha256.slice(0, 24))}…</dd>
+            <dt>From file</dt><dd class="mono small">${h(r.source_filename)}</dd>
+            <dt>Loaded</dt><dd>${when(r.imported_at)}</dd>
+            <dt>State</dt><dd>${h(r.import_status)}</dd>
+            <dt title="A fingerprint of the file's contents. Renaming the file does not change it.">Fingerprint</dt>
+            <dd class="mono small faint">${h(r.sha256.slice(0, 24))}…</dd>
           </dl>`
-        : `<div class="note warn mb0"><p>এখনো কোনো release import করা হয়নি।</p></div>`}
+        : `<div class="note warn mb0"><p>Nothing loaded yet. Until a release is imported,
+            this half of the system has nothing to check against.</p></div>`}
       </div>`;
     }
     rel += '</div>';
 
-    // -- latest audit
     let audit = '';
     if (s) {
       const bars = [
-        ['keep', s.decisions?.KEEP || 0, 'ঠিক আছে'],
-        ['warning', s.decisions?.KEEP_WITH_WARNING || 0, 'সতর্কতা'],
-        ['suggest', s.decisions?.SUGGEST_REPLACEMENT || 0, 'বিকল্প আছে'],
-        ['review', s.decisions?.MANUAL_REVIEW || 0, 'মানুষ দেখুন'],
-        ['unknown', s.decisions?.UNKNOWN_CODE || 0, 'অজানা'],
+        ['keep', s.decisions?.KEEP || 0, 'Still valid'],
+        ['warning', s.decisions?.KEEP_WITH_WARNING || 0, 'Provisional'],
+        ['suggest', s.decisions?.SUGGEST_REPLACEMENT || 0, 'Replacement available'],
+        ['review', s.decisions?.MANUAL_REVIEW || 0, 'Needs a person'],
+        ['unknown', s.decisions?.UNKNOWN_CODE || 0, 'Not recognised'],
       ].filter(b => b[1] > 0);
       const total = s.total_mappings || 1;
       const stale = (s.discouraged || 0) + (s.deprecated || 0) + (s.inactive_snomed || 0);
+      const pending = (s.decisions?.MANUAL_REVIEW || 0) + (s.decisions?.SUGGEST_REPLACEMENT || 0);
 
       audit = `<div class="card">
-        <h2>সর্বশেষ নিরীক্ষা <span class="chip">run #${run.id}</span></h2>
-        <p class="hint">${when(run.started_at)} · LOINC ${h(run.loinc_version || '—')}
-          ${run.snomed_version ? ' · SNOMED ' + h(run.snomed_version) : ''}
-          ${run.scope_json?.source_dataset ? ' · dataset ' + h(run.scope_json.source_dataset) : ''}</p>
+        <h2>Last check <span class="chip">run #${run.id}</span></h2>
+        <p class="hint">${when(run.started_at)} · judged against LOINC ${h(run.loinc_version || '—')}
+          ${run.snomed_version ? ' and SNOMED CT ' + h(run.snomed_version) : ''}
+          ${run.scope_json?.source_dataset ? ' · source ' + h(run.scope_json.source_dataset) : ''}</p>
 
         <div class="grid c4">
-          <div class="stat plain"><div class="n plain">${n(s.total_mappings)}</div><div class="k">নিরীক্ষিত ম্যাপিং</div></div>
-          <div class="stat ok"><div class="n">${n(s.valid)}</div><div class="k">এখনো বৈধ</div></div>
+          <div class="stat plain"><div class="n plain">${n(s.total_mappings)}</div>
+            <div class="k">mappings checked</div></div>
+          <div class="stat ok"><div class="n">${n(s.valid)}</div>
+            <div class="k">still valid</div></div>
           <div class="stat bad"><div class="n">${n(stale)}</div>
-            <div class="k">বাসি হয়ে গেছে</div>
-            <div class="sub">${pct(stale / total)}</div></div>
+            <div class="k">gone stale</div>
+            <div class="sub">${pct(stale / total)} of the total</div></div>
           <div class="stat warn"><div class="n">${n(s.manual_review_required)}</div>
-            <div class="k">মানুষের সিদ্ধান্ত দরকার</div>
-            <div class="sub">abstention ${pct(s.abstention_rate)}</div></div>
+            <div class="k">we could not decide</div>
+            <div class="sub">${pct(s.abstention_rate)} of the total</div></div>
         </div>
 
         <div class="mt">
-          <div class="bar">${bars.map(([k, v]) =>
-            `<i class="${k}" style="width:${(v / total * 100).toFixed(2)}%" title="${h(b_label(k))}: ${n(v)}"></i>`
+          <div class="bar">${bars.map(([k, v, lbl]) =>
+            `<i class="${k}" style="width:${(v / total * 100).toFixed(2)}%" title="${h(lbl)}: ${n(v)}"></i>`
           ).join('')}</div>
           <div class="legend">${bars.map(([k, v, lbl]) =>
-            `<span><i class="bar-key" style="background:var(--${tone_var(k)})"></i>${h(lbl)} ${n(v)}</span>`
+            `<span><i style="background:var(--${toneVar(k)})"></i>${h(lbl)} ${n(v)}</span>`
           ).join('')}</div>
         </div>
 
+        ${stale ? `<div class="note mt"><p><b>What this means.</b> ${plural(stale, 'mapping')}
+          here point at a code that has since been retired or discouraged. Nothing in the data
+          would have told you — a retired code still looks like a perfectly ordinary code.</p></div>` : ''}
+
         <div class="row mt">
-          <a href="#/audit/${run.id}"><button class="ghost" type="button">সব ফলাফল দেখুন</button></a>
-          <a href="#/review"><button type="button">সিদ্ধান্তের সারিতে যান (${n((s.decisions?.MANUAL_REVIEW || 0) + (s.decisions?.SUGGEST_REPLACEMENT || 0))})</button></a>
+          <div class="auto"><a href="#/audit/${run.id}"><button class="ghost" type="button">See all results</button></a></div>
+          ${pending ? `<div class="auto"><a href="#/review"><button type="button">Review ${n(pending)} now</button></a></div>` : ''}
         </div>
       </div>`;
     } else {
-      audit = `<div class="card"><h2>এখনো কোনো নিরীক্ষা চালানো হয়নি</h2>
-        <p class="hint">ম্যাপিং গুলো বর্তমান release-এর বিপরীতে যাচাই করতে একটি নিরীক্ষা চালান।</p>
-        <a href="#/audit"><button type="button">নিরীক্ষা চালান</button></a></div>`;
+      audit = `<div class="card"><h2>No check has been run yet</h2>
+        <p class="hint">Once you have mappings loaded, run a check to see which of them are
+        still valid against today's releases.</p>
+        <a href="#/audit"><button type="button">Run the first check</button></a></div>`;
     }
 
-    // -- what is loaded
-    const byS = {};
-    releases.forEach(r => { (byS[r.system] = byS[r.system] || []).push(r); });
     const loaded = `<div class="card">
-      <h2>ডেটাবেসে যা আছে</h2>
-      <p class="hint">পুরনো release কখনো মুছে ফেলা হয় না — শুধু "current" পতাকাটা সরে যায়।</p>
+      <h2>Versions in the database</h2>
+      <p class="hint">Superseded versions are kept, never deleted — only the "in use now" flag
+        moves. That is what makes an old result reproducible months later.</p>
       <div class="tbl-wrap"><table class="tbl">
-        <thead><tr><th>Terminology</th><th>সংস্করণ</th><th>অবস্থা</th><th>import</th><th>ফাইল</th></tr></thead>
+        <thead><tr><th>Terminology</th><th>Version</th><th>State</th><th>Loaded</th><th>From file</th></tr></thead>
         <tbody>${releases.map(r => `<tr>
-          <td>${h(r.system)}</td>
+          <td>${h(sysName(r.system))}</td>
           <td class="mono">${h(r.version)}</td>
-          <td>${r.is_current ? '<span class="pill keep">current</span>' : '<span class="pill neutral">superseded</span>'}</td>
+          <td>${r.is_current ? '<span class="pill keep">in use now</span>'
+                             : '<span class="pill neutral">superseded</span>'}</td>
           <td class="small">${when(r.imported_at)}</td>
           <td class="mono small faint">${h(r.source_filename)}</td>
         </tr>`).join('')}</tbody></table></div></div>`;
 
-    view().innerHTML = head + rel + '<div style="height:15px"></div>' + audit + loaded;
+    view().innerHTML = head + primer() + rel + '<div style="height:15px"></div>' + audit + loaded;
     refreshBadge();
-  } catch (e) { failed(e, 'ড্যাশবোর্ড লোড করা গেল না'); }
+  } catch (e) { failed(e, 'Could not load the dashboard'); }
 };
 
-function tone_var(k) {
+function toneVar(k) {
   return { keep: 'ok', warning: 'warn', suggest: 'accent', review: 'review', unknown: 'bad' }[k] || 'muted';
-}
-function b_label(k) {
-  return { keep: 'ঠিক আছে', warning: 'সতর্কতা', suggest: 'বিকল্প আছে', review: 'মানুষ দেখুন', unknown: 'অজানা' }[k] || k;
 }
 
 // ==================================================================== LOOKUP
@@ -270,9 +319,10 @@ ROUTES.lookup = async (rest) => {
   const code = rest[1] ? decodeURIComponent(rest[1]) : '';
 
   view().innerHTML = `<div class="page-head">
-      <h1>কোড দেখুন</h1>
-      <p class="lede">একটি LOINC কোড বা SNOMED concept id দিন। উত্তরটি সবসময় বলবে —
-      <b>কোন release-এর বিপরীতে</b> বিচার হলো, কোডটির অবস্থা কী, আর যন্ত্রের সিদ্ধান্ত কী।</p></div>
+      <h1>Look up a code</h1>
+      <p class="lede">Type a LOINC code or a SNOMED CT concept ID. Every answer names
+      <b>the release it was judged against</b> — because a code is never valid or invalid on
+      its own, only inside a particular version of the terminology.</p></div>
 
     <div class="card">
       <div class="row">
@@ -284,16 +334,17 @@ ROUTES.lookup = async (rest) => {
           </select>
         </div>
         <div style="flex:2 1 260px">
-          <label class="f" for="lkCode">কোড</label>
-          <input type="text" id="lkCode" value="${h(code)}" placeholder="যেমন 5895-7  বা  57371010000105" autocomplete="off">
+          <label class="f" for="lkCode">Code</label>
+          <input type="text" id="lkCode" value="${h(code)}"
+            placeholder="e.g. 5895-7   or   57371010000105" autocomplete="off" spellcheck="false">
         </div>
-        <div class="narrow"><button id="lkGo" type="button">দেখুন</button></div>
+        <div class="auto"><button id="lkGo" type="button">Look it up</button></div>
       </div>
-      <p class="hint mt mb0">চেষ্টা করে দেখুন:
-        <a href="#/lookup/LOINC/5895-7">5895-7</a> (পরিত্যক্ত, বিকল্প আছে) ·
-        <a href="#/lookup/LOINC/2531-2">2531-2</a> (দুটি বিকল্প — যন্ত্র হাত তুলে দেয়) ·
-        <a href="#/lookup/LOINC/2951-2">2951-2</a> (দিব্যি বৈধ) ·
-        <a href="#/lookup/SNOMED_CT/57371010000105">57371010000105</a> (নিষ্ক্রিয় SNOMED)
+      <p class="hint mt mb0">Try a real example:
+        <a href="#/lookup/LOINC/5895-7">5895-7</a> — retired, one clean replacement ·
+        <a href="#/lookup/LOINC/2531-2">2531-2</a> — two replacements, so we stop and ask ·
+        <a href="#/lookup/LOINC/2951-2">2951-2</a> — perfectly fine ·
+        <a href="#/lookup/SNOMED_CT/57371010000105">57371010000105</a> — an inactive SNOMED concept
       </p>
     </div>
     <div id="lkOut"></div>`;
@@ -311,8 +362,7 @@ ROUTES.lookup = async (rest) => {
     const path = sys === 'LOINC'
       ? `/api/v1/loinc/${encodeURIComponent(code)}/resolve`
       : `/api/v1/snomed/${encodeURIComponent(code)}/resolve`;
-    const r = await api(path);
-    $('#lkOut').innerHTML = verdictCard(r, sys);
+    $('#lkOut').innerHTML = verdictCard(await api(path), sys);
   } catch (e) {
     $('#lkOut').innerHTML = `<div class="note bad"><p>${h(e.message)}</p></div>`;
   }
@@ -325,37 +375,42 @@ function verdictCard(r, sys) {
 
   let extra = '';
   if (sys === 'LOINC') {
-    extra = `<dt>LOINC status</dt><dd class="mono">${dash(r.raw_status)}</dd>`;
-    if (r.metadata_changed) {
-      const diff = r.metadata_diff || {};
-      extra += `<dt>metadata</dt><dd>কোড বদলায়নি, কিন্তু ${Object.keys(diff).length}টি ক্ষেত্র বদলেছে</dd>`;
-    }
+    extra = `<dt title="The status word LOINC itself publishes for this code">Published status</dt>
+             <dd class="mono">${dash(r.raw_status)}</dd>`;
   } else {
-    extra = `<dt>active</dt><dd>${r.active === null ? '—' : (r.active ? 'হ্যাঁ' : 'না')}</dd>`;
+    extra = `<dt>Active</dt><dd>${r.active === null ? '—' : (r.active ? 'yes' : 'no')}</dd>`;
     if (r.inactivation_reason) {
-      extra += `<dt>নিষ্ক্রিয় কেন</dt><dd class="mono">${h(r.inactivation_reason)}</dd>`;
+      extra += `<dt title="The reason SNOMED CT published for switching it off">Why it was switched off</dt>
+                <dd class="mono">${h(r.inactivation_reason)}</dd>`;
     }
   }
 
   const assoc = (r.historical_associations || []).length
-    ? `<div class="card"><h2>Historical association</h2>
-       <p class="hint">SNOMED নিজেই যে সম্পর্কগুলো ঘোষণা করেছে।</p>
+    ? `<div class="card"><h2>What SNOMED CT says it relates to</h2>
+       <p class="hint">These relationships are published by SNOMED CT itself. Only
+         <b>Replaced by</b> and <b>Same as</b> are definite enough to act on — the rest are
+         shown for a person to weigh up.</p>
        <div class="tbl-wrap"><table class="tbl">
-         <thead><tr><th>ধরন</th><th>লক্ষ্য</th><th>লক্ষ্যটি active?</th></tr></thead>
+         <thead><tr><th>Relationship</th><th>Points at</th><th>Is that one active?</th></tr></thead>
          <tbody>${r.historical_associations.map(a => `<tr>
-           <td><span class="chip">${h(a.association_type)}</span></td>
+           <td><span class="chip">${h(prettyAssoc(a.association_type))}</span></td>
            <td class="mono">${h(a.target_component_id)}</td>
-           <td>${a.target_active === null ? '<span class="faint">জানা নেই</span>' : (a.target_active ? 'হ্যাঁ' : 'না')}</td>
+           <td>${a.target_active === null ? '<span class="faint">not loaded</span>'
+                                          : (a.target_active ? 'yes' : 'no')}</td>
          </tr>`).join('')}</tbody></table></div></div>`
     : '';
 
-  const metaDiff = (sys === 'LOINC' && r.metadata_changed && r.metadata_diff)
-    ? `<div class="card"><h2>কী কী বদলেছে</h2>
-       <p class="hint">কোডটি একই আছে — শুধু বর্ণনা হালনাগাদ হয়েছে। কোড বদলানো <b>হবে না</b>।</p>
+  const metaDiff = (sys === 'LOINC' && r.metadata_changed && r.metadata_diff
+                    && Object.keys(r.metadata_diff).length)
+    ? `<div class="card"><h2>The description changed, but the code did not</h2>
+       <p class="hint">Worth knowing, but <b>not</b> a reason to re-map anything. The code
+         still means the same thing; the wording around it was updated.</p>
        <div class="tbl-wrap"><table class="tbl">
-         <thead><tr><th>ক্ষেত্র</th><th>আগে (${h(r.details?.mapped_against_version || 'পুরনো')})</th><th>এখন (${h(r.version)})</th></tr></thead>
+         <thead><tr><th>Field</th><th>Before</th><th>Now (${h(r.version)})</th></tr></thead>
          <tbody>${Object.entries(r.metadata_diff).map(([k, v]) => `<tr>
-           <td class="mono">${h(k)}</td><td class="strike">${dash(v.old ?? v[0])}</td><td>${dash(v.new ?? v[1])}</td>
+           <td>${h(prettyField(k))}</td>
+           <td class="strike">${dash(v.old ?? v[0])}</td>
+           <td>${dash(v.new ?? v[1])}</td>
          </tr>`).join('')}</tbody></table></div></div>`
     : '';
 
@@ -363,42 +418,59 @@ function verdictCard(r, sys) {
       <div class="top">
         <span class="code mono">${h(code)}</span>
         ${pill(r.decision)} ${statPill(r.status)}
-        <span class="chip">যাচাই হয়েছে ${h(r.system)} ${h(r.version || '—')}-এর বিপরীতে</span>
+        <span class="chip">judged against ${h(sysName(r.system))} ${h(r.version || '—')}</span>
       </div>
       ${r.display ? `<p class="display">${h(r.display)}</p>` : ''}
       <p class="plain">${h(d.say)}${r.reason && REASON[r.reason] ? ' ' + h(REASON[r.reason]) : ''}</p>
       <dl>
-        <dt>সিদ্ধান্ত</dt><dd class="mono">${h(r.decision)}</dd>
-        <dt>কারণ</dt><dd class="mono">${dash(r.reason)}</dd>
+        <dt>Verdict</dt><dd class="mono">${h(r.decision)}</dd>
+        <dt>Because</dt><dd class="mono">${dash(r.reason)}</dd>
         ${extra}
       </dl>
       ${r.details?.message ? `<div class="note mt mb0"><p>${h(r.details.message)}</p></div>` : ''}
     </div>
 
     ${targets.length ? `<div class="card mt">
-      <h2>প্রস্তাবিত বিকল্প (${targets.length})</h2>
+      <h2>${targets.length > 1 ? `Possible replacements (${targets.length})` : 'The official replacement'}</h2>
       <p class="hint">${targets.length > 1
-        ? 'একাধিক থাকায় যন্ত্র <b>নিজে বাছাই করেনি</b> — কোনটি ঠিক তা স্থানীয় পরীক্ষার প্রেক্ষাপটে নির্ভর করে।'
-        : 'terminology-র নিজের ঘোষিত উত্তরসূরি।'}</p>
+        ? 'More than one is published, so <b>we did not pick</b>. Which is right depends on how '
+          + 'your lab actually runs the test — usually the method or the specimen.'
+        : 'This is the successor the terminology itself names.'}</p>
       <div class="grid c2">${targets.map(t => candCard(t, sys)).join('')}</div>
     </div>` : ''}
     ${assoc}${metaDiff}`;
 }
 
+function prettyAssoc(t) {
+  return ({
+    REPLACED_BY: 'Replaced by', SAME_AS: 'Same as',
+    POSSIBLY_EQUIVALENT_TO: 'Possibly the same as', WAS_A: 'Used to be a kind of',
+    ALTERNATIVE: 'Alternative', MOVED_TO: 'Moved to another namespace',
+    MOVED_FROM: 'Moved from', REFERS_TO: 'Refers to', SIMILAR_TO: 'Similar to',
+    PARTIALLY_EQUIVALENT_TO: 'Partly the same as',
+  })[t] || t;
+}
+
 function candCard(t, sys) {
   const code = t.code || t.concept_id;
   const ok = !!t.usable;
-  const link = sys === 'LOINC' ? `#/lookup/LOINC/${encodeURIComponent(code)}`
-                               : `#/lookup/SNOMED_CT/${encodeURIComponent(code)}`;
+  const link = `#/lookup/${sys === 'LOINC' ? 'LOINC' : 'SNOMED_CT'}/${encodeURIComponent(code)}`;
+  const chain = (t.via && t.via.length > 2)
+    ? `<div class="c-via">Reached through ${t.via.map(h).join(' → ')} — the first replacement
+       was itself retired, so we followed the trail.</div>` : '';
+  const statusWord = t.status
+    ? ((STATUS[t.status === 'ACTIVE' ? 'CURRENT_VALID' : t.status] || {}).label || t.status)
+    : '';
   return `<div class="cand ${ok ? 'usable' : 'unusable'}">
     <div class="c-code mono"><a href="${link}">${h(code)}</a>
-      ${ok ? '<span class="pill keep">ব্যবহারযোগ্য</span>' : '<span class="pill unknown">ব্যবহারযোগ্য নয়</span>'}</div>
+      ${ok ? '<span class="pill keep">safe to use</span>'
+           : '<span class="pill unknown">not safe to use</span>'}</div>
     ${t.display ? `<div class="c-disp">${h(t.display)}</div>` : ''}
     <div class="c-via">
-      ${t.status ? 'status ' + h(t.status) + ' · ' : ''}
-      ${t.association_type ? h(t.association_type) + ' · ' : ''}
-      ${(t.via && t.via.length > 1) ? 'পথ: ' + t.via.map(h).join(' → ') : ''}
+      ${statusWord ? h(statusWord) + ' in the current release' : ''}
+      ${t.association_type ? ' · ' + h(prettyAssoc(t.association_type)) : ''}
     </div>
+    ${chain}
     ${t.note ? `<div class="c-via">${h(t.note)}</div>` : ''}
   </div>`;
 }
@@ -408,34 +480,36 @@ ROUTES.mappings = async (rest) => {
   if (rest[0]) return mappingDetail(rest[0]);
   loading();
   try {
-    const q = new URLSearchParams(location.search);
-    const rows = await api('/api/v1/mappings?limit=500');
+    const rows = await api('/api/v1/mappings?limit=1000');
     const datasets = [...new Set(rows.map(r => r.source_dataset))].sort();
 
     view().innerHTML = `<div class="page-head">
-        <h1>স্থানীয় ম্যাপিং</h1>
-        <p class="lede">হাসপাতালের নিজস্ব পরীক্ষার নাম আর তার সাথে বসানো standard কোড।
-        <b>কোন release-এর বিপরীতে</b> বসানো হয়েছিল সেটাও এখানে থাকে — না থাকলে
-        <span class="faint">খালি</span> দেখাবে, অনুমান করা হবে না।</p></div>
+        <h1>Your mappings</h1>
+        <p class="lede">Each row pairs one of your own test names with a standard code somebody
+        once chose for it. The column that matters most is <b>which release that choice was made
+        against</b> — and where it is genuinely unknown, we leave it blank rather than invent
+        one.</p></div>
 
       <div class="card">
         <div class="row">
-          <div><label class="f" for="mFilter">খুঁজুন</label>
-            <input type="text" id="mFilter" placeholder="নাম বা কোড লিখুন…" autocomplete="off"></div>
-          <div class="narrow"><label class="f" for="mDs">Dataset</label>
-            <select id="mDs"><option value="">সব</option>
+          <div><label class="f" for="mFilter">Search</label>
+            <input type="text" id="mFilter" placeholder="test name or code…" autocomplete="off"></div>
+          <div class="narrow"><label class="f" for="mDs">Source</label>
+            <select id="mDs"><option value="">All sources</option>
               ${datasets.map(d => `<option>${h(d)}</option>`).join('')}</select></div>
           <div class="narrow"><label class="f" for="mSys">Terminology</label>
-            <select id="mSys"><option value="">সব</option><option>LOINC</option><option>SNOMED_CT</option></select></div>
+            <select id="mSys"><option value="">Both</option><option value="LOINC">LOINC</option>
+              <option value="SNOMED_CT">SNOMED CT</option></select></div>
         </div>
         <p class="hint mt mb0" id="mCount"></p>
       </div>
 
       <div class="card"><div class="tbl-wrap"><table class="tbl">
         <thead><tr>
-          <th>স্থানীয় কোড</th><th>স্থানীয় নাম</th><th>প্রেক্ষাপট</th>
-          <th>Terminology</th><th>লক্ষ্য কোড</th><th>যে সংস্করণে বসানো</th><th>review</th>
-        </tr></thead><tbody id="mBody"></tbody></table></div></div>`;
+          <th>Your code</th><th>Your name for it</th><th>Specimen</th>
+          <th>Terminology</th><th>Standard code</th><th>Chosen against</th><th>Reviewed?</th>
+        </tr></thead><tbody id="mBody"></tbody></table></div>
+        <p class="hint mt mb0">Click any row for its full history.</p></div>`;
 
     const render = () => {
       const term = $('#mFilter').value.trim().toLowerCase();
@@ -446,28 +520,31 @@ ROUTES.mappings = async (rest) => {
         (!term || r.local_text.toLowerCase().includes(term)
                || r.local_code.toLowerCase().includes(term)
                || (r.target_code || '').toLowerCase().includes(term)));
-      $('#mCount').innerHTML = `${n(list.length)} টি দেখানো হচ্ছে (মোট ${n(rows.length)})`;
+      $('#mCount').innerHTML = list.length === rows.length
+        ? `Showing all ${n(rows.length)}.`
+        : `Showing ${n(list.length)} of ${n(rows.length)}.`;
       $('#mBody').innerHTML = list.slice(0, 300).map(r => {
         const ctx = r.local_context_json || {};
         return `<tr class="clickable" onclick="location.hash='#/mappings/${r.id}'">
           <td class="mono">${h(r.local_code)}</td>
           <td>${h(r.local_text)}</td>
           <td class="small faint">${h([ctx.fluid, ctx.category].filter(Boolean).join(' · '))}</td>
-          <td>${h(r.target_system)}</td>
+          <td>${h(sysName(r.target_system))}</td>
           <td class="mono">${h(r.target_code)}</td>
-          <td>${r.mapped_against_version ? '<span class="mono">' + h(r.mapped_against_version) + '</span>'
-                                         : '<span class="faint">অজানা</span>'}</td>
+          <td>${r.mapped_against_version
+            ? '<span class="mono">' + h(r.mapped_against_version) + '</span>'
+            : '<span class="faint" title="Genuinely unknown for this dataset. We do not guess.">not recorded</span>'}</td>
           <td>${r.review_status === 'APPROVED' ? '<span class="pill keep">approved</span>'
               : r.review_status === 'NEEDS_REVIEW' ? '<span class="pill review">needs review</span>'
-              : '<span class="chip">' + h(r.review_status) + '</span>'}</td>
+              : '<span class="chip">not yet</span>'}</td>
         </tr>`;
-      }).join('') || `<tr><td colspan="7" class="empty">কিছু মিলল না।</td></tr>`;
+      }).join('') || `<tr><td colspan="7" class="empty">Nothing matches that.</td></tr>`;
     };
     ['#mFilter', '#mDs', '#mSys'].forEach(s => {
       $(s).addEventListener('input', render); $(s).addEventListener('change', render);
     });
     render();
-  } catch (e) { failed(e, 'ম্যাপিং তালিকা আনা গেল না'); }
+  } catch (e) { failed(e, 'Could not load your mappings'); }
 };
 
 async function mappingDetail(id) {
@@ -484,42 +561,57 @@ async function mappingDetail(id) {
         : `/api/v1/snomed/${encodeURIComponent(m.target_code)}/resolve`;
       const r = await api(path + (m.mapped_against_version
         ? `?mapped_against_version=${encodeURIComponent(m.mapped_against_version)}` : ''));
-      live = `<h2 class="mt">এই কোডটি এখন কেমন আছে</h2>` + verdictCard(r, m.target_system);
+      live = `<h2 class="mt">How that code is doing today</h2>` + verdictCard(r, m.target_system);
     } catch { live = ''; }
 
     view().innerHTML = `<div class="page-head">
         <h1>${h(m.local_text)}</h1>
-        <p class="lede"><span class="mono">${h(m.source_dataset)}</span> ·
-          স্থানীয় কোড <span class="mono">${h(m.local_code)}</span></p></div>
+        <p class="lede">From <span class="mono">${h(m.source_dataset)}</span>, your code
+          <span class="mono">${h(m.local_code)}</span></p></div>
 
-      <div class="card"><h2>ম্যাপিং</h2>
+      <div class="card"><h2>The mapping</h2>
         <dl class="kv">
-          <dt>লক্ষ্য</dt><dd class="mono">${h(m.target_system)} ${h(m.target_code)}</dd>
-          <dt>যে সংস্করণে বসানো</dt><dd>${m.mapped_against_version
+          <dt>Standard code</dt>
+          <dd class="mono">${h(sysName(m.target_system))} ${h(m.target_code)}</dd>
+          <dt>Chosen against</dt><dd>${m.mapped_against_version
             ? '<span class="mono">' + h(m.mapped_against_version) + '</span>'
-            : '<span class="faint">অজানা — MIMIC-III এর ক্ষেত্রে সত্যিই অজানা, তাই বানানো হয়নি</span>'}</dd>
-          <dt>সম্পর্কের ধরন</dt><dd class="mono">${h(m.map_correlation)}</dd>
-          <dt>review</dt><dd>${h(m.review_status)}</dd>
-          <dt>প্রেক্ষাপট</dt><dd>${h([ctx.fluid, ctx.category].filter(Boolean).join(' · ')) || '—'}</dd>
-          <dt>তৈরি</dt><dd>${when(m.created_at)}</dd>
+            : '<span class="faint">Not recorded — genuinely unknown for this dataset, so we '
+              + 'leave it blank instead of inventing one.</span>'}</dd>
+          <dt title="How closely the local term and the standard code line up">Closeness of match</dt>
+          <dd>${h(prettyCorrelation(m.map_correlation))}</dd>
+          <dt>Reviewed</dt>
+          <dd>${h(m.review_status === 'UNREVIEWED' ? 'not yet' : m.review_status.toLowerCase())}</dd>
+          <dt>Specimen</dt><dd>${h([ctx.fluid, ctx.category].filter(Boolean).join(' · ')) || '—'}</dd>
+          <dt>Added</dt><dd>${when(m.created_at)}</dd>
         </dl></div>
 
-      <div class="card"><h2>ইতিহাস (${revs.length})</h2>
-        <p class="hint">এই তালিকায় কিছু কখনো মুছে যায় না। কোড বদলালে নতুন সারি যোগ হয়।</p>
+      <div class="card"><h2>History (${revs.length})</h2>
+        <p class="hint">Nothing is ever removed from this list. If the code changes, a new row
+          is added — so you can always see what it used to be and who changed it.</p>
         ${revs.length ? `<div class="tbl-wrap"><table class="tbl">
-          <thead><tr><th>কখন</th><th>আগে</th><th>পরে</th><th>কে</th><th>কারণ</th></tr></thead>
+          <thead><tr><th>When</th><th>Was</th><th>Became</th><th>Approved by</th><th>Why</th></tr></thead>
           <tbody>${revs.map(v => `<tr>
             <td class="small">${when(v.approved_at || v.created_at)}</td>
-            <td class="mono">${h(v.old_target_code)} <span class="faint">@${h(v.old_target_version || '—')}</span></td>
-            <td class="mono">${h(v.new_target_code)} <span class="faint">@${h(v.new_target_version || '—')}</span></td>
+            <td class="mono">${h(v.old_target_code)} <span class="faint">in ${h(v.old_target_version || '—')}</span></td>
+            <td class="mono">${h(v.new_target_code)} <span class="faint">in ${h(v.new_target_version || '—')}</span></td>
             <td>${dash(v.approved_by)}</td>
             <td class="small">${dash(v.reason)}</td></tr>`).join('')}
           </tbody></table></div>`
-        : `<div class="empty"><p>এখনো কোনো পরিবর্তন হয়নি।</p></div>`}
+        : `<div class="empty"><p>This mapping has never been changed.</p></div>`}
       </div>
       ${live}
-      <a href="#/mappings"><button class="quiet" type="button">← তালিকায় ফিরুন</button></a>`;
-  } catch (e) { failed(e, 'ম্যাপিংটি আনা গেল না'); }
+      <a href="#/mappings"><button class="quiet" type="button">← Back to all mappings</button></a>`;
+  } catch (e) { failed(e, 'Could not load that mapping'); }
+}
+
+function prettyCorrelation(c) {
+  return ({
+    EXACT_MATCH: 'exact match',
+    BROAD_TO_NARROW: 'the standard code is narrower than your term',
+    NARROW_TO_BROAD: 'the standard code is broader than your term',
+    PARTIAL_OVERLAP: 'they only partly overlap',
+    NOT_SPECIFIED: 'not stated',
+  })[c] || c;
 }
 
 // ===================================================================== AUDIT
@@ -529,28 +621,30 @@ ROUTES.audit = async (rest) => {
   try {
     const runs = await api('/api/v1/audits?limit=25');
     view().innerHTML = `<div class="page-head">
-        <h1>নিরীক্ষা</h1>
-        <p class="lede">প্রতিটি ম্যাপিং বর্তমান release-এর বিপরীতে যাচাই করা হয়।
-        নিরীক্ষা <b>কখনো কোনো কোড বদলায় না</b> — শুধু রায় লেখে।</p></div>
+        <h1>Run a check</h1>
+        <p class="lede">A check re-tests every mapping against the release that is current
+        today. It <b>never changes a code</b> — it only records what it found. Changing
+        anything is a separate, deliberate step.</p></div>
 
       <div class="card">
-        <h2>নতুন নিরীক্ষা চালান</h2>
-        <p class="hint">খালি রাখলে সব ম্যাপিং যাচাই হবে।</p>
+        <h2>New check</h2>
+        <p class="hint">Leave everything blank to check all your mappings.</p>
         <div class="row">
-          <div><label class="f" for="aDs">Dataset (ঐচ্ছিক)</label>
-            <input type="text" id="aDs" placeholder="যেমন MIMIC_III" autocomplete="off"></div>
-          <div class="narrow"><label class="f" for="aSys">Terminology</label>
-            <select id="aSys"><option value="">সব</option><option>LOINC</option><option>SNOMED_CT</option></select></div>
-          <div class="narrow"><label class="f" for="aLim">সর্বোচ্চ কতটি</label>
-            <input type="number" id="aLim" min="1" placeholder="সব"></div>
-          <div class="narrow"><button id="aGo" type="button">চালান</button></div>
+          <div><label class="f" for="aDs">Only this source <span class="faint">(optional)</span></label>
+            <input type="text" id="aDs" placeholder="e.g. MIMIC_III" autocomplete="off"></div>
+          <div class="narrow"><label class="f" for="aSys">Only this terminology</label>
+            <select id="aSys"><option value="">Both</option><option value="LOINC">LOINC</option>
+              <option value="SNOMED_CT">SNOMED CT</option></select></div>
+          <div class="narrow"><label class="f" for="aLim">Stop after</label>
+            <input type="number" id="aLim" min="1" placeholder="no limit"></div>
+          <div class="auto"><button id="aGo" type="button">Run it</button></div>
         </div>
       </div>
 
-      <div class="card"><h2>আগের নিরীক্ষা</h2>
+      <div class="card"><h2>Earlier checks</h2>
         ${runs.length ? `<div class="tbl-wrap"><table class="tbl">
-          <thead><tr><th>#</th><th>কখন</th><th>LOINC</th><th>SNOMED</th><th class="num">ম্যাপিং</th>
-            <th class="num">বাসি</th><th class="num">মানুষ দরকার</th><th>scope</th></tr></thead>
+          <thead><tr><th>#</th><th>When</th><th>LOINC</th><th>SNOMED CT</th><th class="num">Checked</th>
+            <th class="num">Stale</th><th class="num">Needed a person</th><th>Scope</th></tr></thead>
           <tbody>${runs.map(r => {
             const s = r.summary_json || {};
             const stale = (s.discouraged || 0) + (s.deprecated || 0) + (s.inactive_snomed || 0);
@@ -560,28 +654,30 @@ ROUTES.audit = async (rest) => {
               <td class="num">${n(r.mapping_count)}</td>
               <td class="num">${stale ? '<b>' + n(stale) + '</b>' : '0'}</td>
               <td class="num">${n(s.manual_review_required || 0)}</td>
-              <td class="small faint">${h(r.scope_json?.source_dataset || 'সব')}</td></tr>`;
+              <td class="small faint">${h(r.scope_json?.source_dataset || 'everything')}</td></tr>`;
           }).join('')}</tbody></table></div>`
-        : `<div class="empty"><p>এখনো কিছু নেই।</p></div>`}</div>`;
+        : `<div class="empty"><p>No checks yet.</p></div>`}</div>`;
 
     $('#aGo').addEventListener('click', async () => {
-      const btn = $('#aGo'); btn.disabled = true; btn.innerHTML = 'চলছে… <span class="spin"></span>';
+      const btn = $('#aGo'); btn.disabled = true; btn.innerHTML = 'Checking… <span class="spin"></span>';
       try {
-        const body = {
-          source_dataset: $('#aDs').value.trim() || null,
-          target_system: $('#aSys').value || null,
-          limit: $('#aLim').value ? Number($('#aLim').value) : null,
-          export_csv: true,
-        };
-        const run = await api('/api/v1/audits', { method: 'POST', body: JSON.stringify(body) });
-        toast(`নিরীক্ষা #${run.id} শেষ — ${n(run.mapping_count)} টি ম্যাপিং যাচাই হয়েছে।`, 'ok');
+        const run = await api('/api/v1/audits', {
+          method: 'POST',
+          body: JSON.stringify({
+            source_dataset: $('#aDs').value.trim() || null,
+            target_system: $('#aSys').value || null,
+            limit: $('#aLim').value ? Number($('#aLim').value) : null,
+            export_csv: true,
+          }),
+        });
+        toast(`Check #${run.id} finished — ${plural(run.mapping_count, 'mapping')} tested.`, 'ok');
         location.hash = `#/audit/${run.id}`;
       } catch (e) {
-        toast('নিরীক্ষা চালানো গেল না: ' + h(e.message), 'bad');
-        btn.disabled = false; btn.textContent = 'চালান';
+        toast('The check could not run: ' + h(e.message), 'bad');
+        btn.disabled = false; btn.textContent = 'Run it';
       }
     });
-  } catch (e) { failed(e, 'নিরীক্ষার তালিকা আনা গেল না'); }
+  } catch (e) { failed(e, 'Could not load earlier checks'); }
 };
 
 async function auditDetail(id, decision = '') {
@@ -600,38 +696,44 @@ async function auditDetail(id, decision = '') {
     const tabs = ['', 'KEEP', 'SUGGEST_REPLACEMENT', 'MANUAL_REVIEW', 'KEEP_WITH_WARNING', 'UNKNOWN_CODE']
       .filter(k => k === '' || counts[k])
       .map(k => `<button class="${k === decision ? 'on' : ''}" data-d="${k}">
-          ${k === '' ? 'সব' : h(dec(k).bn)} <span class="chip">${n(k === '' ? run.mapping_count : counts[k])}</span>
+          ${k === '' ? 'Everything' : h(dec(k).label)}
+          <span class="chip">${n(k === '' ? run.mapping_count : counts[k])}</span>
         </button>`).join('');
 
     view().innerHTML = `<div class="page-head">
-        <h1>নিরীক্ষা #${run.id}</h1>
-        <p class="lede">${when(run.started_at)} · যাচাই হয়েছে
-          <b>LOINC ${h(run.loinc_version || '—')}</b>${run.snomed_version ? ' ও <b>SNOMED ' + h(run.snomed_version) + '</b>' : ''}
-          -এর বিপরীতে${run.scope_json?.source_dataset ? ' · dataset ' + h(run.scope_json.source_dataset) : ''}</p></div>
+        <h1>Check #${run.id}</h1>
+        <p class="lede">${when(run.started_at)} · judged against
+          <b>LOINC ${h(run.loinc_version || '—')}</b>${run.snomed_version
+            ? ' and <b>SNOMED CT ' + h(run.snomed_version) + '</b>' : ''}
+          ${run.scope_json?.source_dataset ? ' · source ' + h(run.scope_json.source_dataset) : ''}</p></div>
 
       <div class="grid c4">
-        <div class="stat plain"><div class="n plain">${n(s.total_mappings)}</div><div class="k">যাচাই হয়েছে</div></div>
-        <div class="stat ok"><div class="n">${n(s.valid)}</div><div class="k">এখনো বৈধ</div></div>
-        <div class="stat warn"><div class="n">${n(s.discouraged)}</div><div class="k">নিরুৎসাহিত</div></div>
-        <div class="stat bad"><div class="n">${n(s.deprecated)}</div><div class="k">পরিত্যক্ত</div></div>
+        <div class="stat plain"><div class="n plain">${n(s.total_mappings)}</div><div class="k">checked</div></div>
+        <div class="stat ok"><div class="n">${n(s.valid)}</div><div class="k">still valid</div></div>
+        <div class="stat warn"><div class="n">${n(s.discouraged)}</div><div class="k">discouraged</div></div>
+        <div class="stat bad"><div class="n">${n(s.deprecated)}</div><div class="k">retired</div></div>
       </div>
       <div class="grid c4 mt">
-        <div class="stat"><div class="n">${n(s.single_replacement)}</div><div class="k">একটি বিকল্প</div></div>
-        <div class="stat"><div class="n">${n(s.multiple_replacement)}</div><div class="k">একাধিক বিকল্প</div></div>
-        <div class="stat"><div class="n">${n(s.no_replacement)}</div><div class="k">কোনো বিকল্প নেই</div></div>
-        <div class="stat warn"><div class="n">${pct(s.abstention_rate)}</div><div class="k">abstention rate</div>
-          <div class="sub">যন্ত্র কতবার হাত তুলেছে</div></div>
+        <div class="stat"><div class="n">${n(s.single_replacement)}</div>
+          <div class="k">one clear replacement</div></div>
+        <div class="stat"><div class="n">${n(s.multiple_replacement)}</div>
+          <div class="k">several to choose from</div></div>
+        <div class="stat"><div class="n">${n(s.no_replacement)}</div>
+          <div class="k">no replacement published</div></div>
+        <div class="stat warn"><div class="n">${pct(s.abstention_rate)}</div>
+          <div class="k">we stopped and asked</div>
+          <div class="sub">the share we would not guess on</div></div>
       </div>
 
-      ${run.report_path ? `<div class="note mt"><p>CSV রিপোর্ট:
+      ${run.report_path ? `<div class="note mt"><p>A spreadsheet of every result was saved to
         <span class="mono small">${h(run.report_path)}</span></p></div>` : ''}
 
       <div class="card mt">
         <div class="tabs" id="aTabs">${tabs}</div>
         <div class="tbl-wrap"><table class="tbl">
-          <thead><tr><th>স্থানীয়</th><th>কোড</th><th>অবস্থা</th><th>সিদ্ধান্ত</th><th>কারণ</th><th>বিকল্প</th></tr></thead>
+          <thead><tr><th>Your test</th><th>Code</th><th>Status now</th><th>Verdict</th>
+            <th>Because</th><th>Replacements</th></tr></thead>
           <tbody>${results.map(r => {
-            const md = r.metadata_json || {};
             const tg = r.suggested_targets_json || [];
             const m = byId.get(r.mapping_id);
             const ctx = (m && m.local_context_json) || {};
@@ -642,33 +744,33 @@ async function auditDetail(id, decision = '') {
               <td class="mono"><a href="#/lookup/${h(r.target_system)}/${encodeURIComponent(r.old_code)}">${h(r.old_code)}</a></td>
               <td>${statPill(r.terminology_status)}</td>
               <td>${pill(r.decision)}</td>
-              <td class="small faint">${dash(r.reason)}</td>
+              <td class="small faint">${r.reason && REASON[r.reason] ? h(REASON[r.reason]) : dash(r.reason)}</td>
               <td class="mono small">${tg.length
                 ? tg.map(t => h(t.code || t.concept_id)).join('<br>')
-                : '<span class="faint">—</span>'}</td></tr>`;
-          }).join('') || `<tr><td colspan="6" class="empty">এই শ্রেণিতে কিছু নেই।</td></tr>`}
+                : '<span class="faint">none</span>'}</td></tr>`;
+          }).join('') || `<tr><td colspan="6" class="empty">Nothing in this category.</td></tr>`}
           </tbody></table></div>
-        ${results.length >= 500 ? '<p class="hint mt mb0">প্রথম ৫০০টি দেখানো হচ্ছে।</p>' : ''}
+        ${results.length >= 500 ? '<p class="hint mt mb0">Showing the first 500.</p>' : ''}
       </div>
-      <a href="#/audit"><button class="quiet" type="button">← নিরীক্ষার তালিকা</button></a>`;
+      <a href="#/audit"><button class="quiet" type="button">← All checks</button></a>`;
 
     $('#aTabs').addEventListener('click', e => {
       const b = e.target.closest('button'); if (!b) return;
       auditDetail(id, b.dataset.d);
     });
-  } catch (e) { failed(e, 'নিরীক্ষাটি আনা গেল না'); }
+  } catch (e) { failed(e, 'Could not load that check'); }
 }
 
 // ==================================================================== REVIEW
 ROUTES.review = async () => {
-  loading('সিদ্ধান্তের সারি তৈরি হচ্ছে…');
+  loading('Gathering the cases that need you…');
   try {
     const runs = await api('/api/v1/audits?limit=1');
     if (!runs.length) {
-      view().innerHTML = `<div class="page-head"><h1>সিদ্ধান্তের সারি</h1></div>
+      view().innerHTML = `<div class="page-head"><h1>Needs your decision</h1></div>
         <div class="card"><div class="empty"><div class="big">🧪</div>
-        <p>এখনো কোনো নিরীক্ষা চালানো হয়নি, তাই সিদ্ধান্ত নেওয়ার কিছু নেই।</p>
-        <a href="#/audit"><button type="button">নিরীক্ষা চালান</button></a></div></div>`;
+        <p>No check has been run yet, so there is nothing to decide.</p>
+        <a href="#/audit"><button type="button">Run a check first</button></a></div></div>`;
       return;
     }
     const run = runs[0];
@@ -677,33 +779,35 @@ ROUTES.review = async () => {
       api(`/api/v1/audits/${run.id}/results?decision=MANUAL_REVIEW&limit=300`),
       api('/api/v1/mappings?limit=1000'),
     ]);
-    // The verdict knows the terminology's name for the code. The reviewer needs
-    // the hospital's name for the test, and the specimen it was taken from --
-    // that is the local context the engine abstained for want of.
+    // The verdict knows the terminology's name for the code. You need your own
+    // name for the test, and the specimen it came from -- that is the local
+    // context the engine stopped for want of.
     const byId = new Map(mappings.map(m => [m.id, m]));
     const items = [...sugg, ...manual].filter(r => r.mapping_id);
 
     view().innerHTML = `<div class="page-head">
-        <h1>সিদ্ধান্তের সারি</h1>
-        <p class="lede">নিরীক্ষা #${run.id} যেসব ম্যাপিং নিয়ে নিজে সিদ্ধান্ত নেয়নি বা
-        পরিবর্তনের প্রস্তাব দিয়েছে।</p></div>
+        <h1>Needs your decision</h1>
+        <p class="lede">From check #${run.id}: the mappings we either could not decide, or
+        would like to change but will not without you.</p></div>
 
       <div class="note">
-        <p><b>নিরাপত্তার নিয়ম:</b> যন্ত্র শুধু <i>প্রস্তাব</i> করতে পারে। কোড বদলাতে হলে
-        <b>নামসহ একজন মানুষকে</b> অনুমোদন দিতে হয়। অনুমোদনের সময় পুরনো কোড ও তার
-        release ইতিহাসে লেখা থাকে — কিছুই মুছে যায় না।</p>
+        <p><b>How this works.</b> The check can <i>propose</i>; only a person can <i>apply</i>.
+        When you approve something, your name goes on it, the old code and the release it was
+        valid in are written to the history, and nothing is erased. If the replacement is not
+        valid in today's release, the approval is refused — even from here.</p>
       </div>
 
       <div class="card">
         <div class="row">
-          <div><label class="f" for="rvName">আপনার নাম <span class="faint">(প্রতিটি অনুমোদনের সাথে লেখা থাকবে)</span></label>
-            <input type="text" id="rvName" placeholder="যেমন dr-marzia" autocomplete="off"
+          <div><label class="f" for="rvName">Your name
+              <span class="faint">— recorded against every approval you make</span></label>
+            <input type="text" id="rvName" placeholder="e.g. Dr Marzia Khan" autocomplete="off"
               value="${h(localStorage.getItem('vas.reviewer') || '')}"></div>
-          <div class="narrow"><label class="f" for="rvFilter">দেখান</label>
+          <div class="wide-narrow"><label class="f" for="rvFilter">Show</label>
             <select id="rvFilter">
-              <option value="">সব (${items.length})</option>
-              <option value="SUGGEST_REPLACEMENT">বিকল্প আছে (${sugg.length})</option>
-              <option value="MANUAL_REVIEW">মানুষ দেখুন (${manual.length})</option>
+              <option value="">Everything (${items.length})</option>
+              <option value="SUGGEST_REPLACEMENT">Ready to approve (${sugg.length})</option>
+              <option value="MANUAL_REVIEW">You choose (${manual.length})</option>
             </select></div>
         </div>
       </div>
@@ -718,11 +822,11 @@ ROUTES.review = async () => {
       $('#rvList').innerHTML = list.length
         ? list.map(r => reviewCard(r, byId.get(r.mapping_id))).join('')
         : `<div class="card"><div class="empty"><div class="big">✅</div>
-           <p>এই শ্রেণিতে সিদ্ধান্ত নেওয়ার কিছু বাকি নেই।</p></div></div>`;
+           <p>Nothing left to decide in this category.</p></div></div>`;
     };
     $('#rvFilter').addEventListener('change', render);
     render();
-  } catch (e) { failed(e, 'সিদ্ধান্তের সারি তৈরি করা গেল না'); }
+  } catch (e) { failed(e, 'Could not build the review list'); }
 };
 
 function reviewCard(r, m) {
@@ -739,66 +843,69 @@ function reviewCard(r, m) {
 
   return `<div class="card" id="rc-${r.id}">
     <div class="top" style="display:flex;gap:9px;align-items:center;flex-wrap:wrap">
-      <b>${h(m ? m.local_text : 'ম্যাপিং ' + r.mapping_id)}</b>
+      <b>${h(m ? m.local_text : 'Mapping ' + r.mapping_id)}</b>
       ${context ? `<span class="chip">${h(context)}</span>` : ''}
       ${pill(r.decision)} ${statPill(r.terminology_status)}
     </div>
     <p class="hint">
-      ${m ? `<span class="mono">${h(m.source_dataset)}/${h(m.local_code)}</span> · ` : ''}
-      বর্তমান কোড
+      ${m ? `<span class="mono">${h(m.source_dataset)} / ${h(m.local_code)}</span> · ` : ''}
+      currently mapped to
       <a href="#/lookup/${h(r.target_system)}/${encodeURIComponent(r.old_code)}" class="mono">${h(r.old_code)}</a>
-      ${md.display ? '· ' + h(md.display) : ''}
-      · যাচাই <span class="mono">${h(r.current_version || '')}</span>-এর বিপরীতে</p>
+      ${md.display ? '— ' + h(md.display) : ''}
+      · checked against <span class="mono">${h(r.current_version || '')}</span></p>
 
     <p class="plain" style="background:var(--line-soft);padding:8px 10px;border-radius:6px">
       ${h(d.say)} ${r.reason && REASON[r.reason] ? h(REASON[r.reason]) : ''}</p>
 
-    ${usable.length > 1 && context ? `<div class="note warn mt"><p>এই পরীক্ষাটি
-       <b>${h(context)}</b> থেকে নেওয়া। নিচের বিকল্পগুলো সাধারণত পদ্ধতি বা নমুনায় আলাদা —
-       আপনার ল্যাবের প্রকৃত পদ্ধতির সাথে মিলিয়ে বাছুন।</p></div>` : ''}
+    ${usable.length > 1 && context ? `<div class="note warn mt"><p><b>This one is on you.</b>
+       Your test is run on <b>${h(context)}</b>. The options below usually differ by method or
+       specimen — pick the one that matches how your lab actually performs it.</p></div>` : ''}
+
     ${tg.length ? `<div class="grid c2 mt">${tg.map(t => candCard(t, r.target_system)).join('')}</div>` : ''}
 
     ${usable.length ? `<div class="row mt">
-        <div><label class="f">যে কোডে বদলাবেন</label>
+        <div><label class="f">Change it to</label>
           <select id="sel-${r.id}">${opts}</select></div>
-        <div style="flex:2 1 220px"><label class="f">কারণ <span class="faint">(ঐচ্ছিক, ইতিহাসে থাকবে)</span></label>
-          <input type="text" id="rsn-${r.id}" placeholder="যেমন: স্থানীয় পদ্ধতির সাথে মিলিয়ে দেখা হয়েছে"></div>
-        <div class="narrow"><button type="button" onclick="approve(${r.id}, ${r.mapping_id})">অনুমোদন</button></div>
+        <div style="flex:2 1 220px"><label class="f">Why <span class="faint">(optional, kept in the history)</span></label>
+          <input type="text" id="rsn-${r.id}" placeholder="e.g. matches the method our lab uses"></div>
+        <div class="auto"><button type="button" onclick="approve(${r.id}, ${r.mapping_id})">Approve</button></div>
       </div>`
-    : `<div class="note warn mt mb0"><p>ব্যবহারযোগ্য কোনো বিকল্প নেই — এখানে কোড বেছে দেওয়ার
-       কিছু নেই। সঠিক কোডটি হাতে খুঁজে বের করতে হবে, তারপর
-       <span class="mono">/api/v1/mappings/${r.mapping_id}/approve-replacement</span> দিয়ে
-       <span class="mono">allow_unsuggested</span> সহ প্রয়োগ করতে হবে।</p></div>`}
+    : `<div class="note warn mt mb0"><p><b>Nothing to pick from.</b> No usable replacement has
+       been published for this code, so there is no shortcut here — someone has to work out the
+       right code by hand. Once you know it, it can be applied through the API with
+       <span class="mono">allow_unsuggested</span>, and it will still be checked against
+       today's release before it is accepted.</p></div>`}
   </div>`;
 }
 
 window.approve = async (resultId, mappingId) => {
   const reviewer = ($('#rvName').value || '').trim();
   if (!reviewer) {
-    toast('আগে আপনার নাম লিখুন — অনুমোদন কার, সেটা রেকর্ডে থাকতে হয়।', 'bad');
+    toast('Please put your name in first — an approval has to belong to someone.', 'bad');
     $('#rvName').focus();
     return;
   }
   const target = $(`#sel-${resultId}`).value;
   const reason = ($(`#rsn-${resultId}`).value || '').trim();
 
-  modal('এই পরিবর্তনটি নিশ্চিত করুন', `
-    <p>এটি প্রয়োগ করলে যা ঘটবে:</p>
+  modal('Confirm this change', `
+    <p>Here is exactly what will happen:</p>
     <dl class="kv">
-      <dt>ম্যাপিং</dt><dd>#${mappingId}</dd>
-      <dt>নতুন কোড</dt><dd class="mono">${h(target)}</dd>
-      <dt>অনুমোদনকারী</dt><dd>${h(reviewer)}</dd>
-      <dt>কারণ</dt><dd>${reason ? h(reason) : '<span class="faint">দেওয়া হয়নি</span>'}</dd>
+      <dt>Mapping</dt><dd>#${mappingId}</dd>
+      <dt>New code</dt><dd class="mono">${h(target)}</dd>
+      <dt>Approved by</dt><dd>${h(reviewer)}</dd>
+      <dt>Reason</dt><dd>${reason ? h(reason) : '<span class="faint">none given</span>'}</dd>
     </dl>
-    <div class="note mt"><p>পুরনো কোড ও তার release একটি নতুন ইতিহাস-সারিতে সংরক্ষিত থাকবে।
-    কিছুই মুছে যাবে না। লক্ষ্য কোডটি বর্তমান release-এ বৈধ কিনা, সেটাও আবার যাচাই হবে।</p></div>
+    <div class="note mt"><p>The old code and the release it was valid in are written to a new
+      history row. Nothing is deleted. Before the change is accepted, the new code is checked
+      once more against today's release — if it is not valid, the approval is refused.</p></div>
     <div class="row mt">
-      <div class="narrow"><button type="button" id="okBtn">হ্যাঁ, অনুমোদন করুন</button></div>
-      <div class="narrow"><button type="button" class="quiet" onclick="closeModal()">বাতিল</button></div>
+      <div class="auto"><button type="button" id="okBtn">Yes, approve it</button></div>
+      <div class="auto"><button type="button" class="quiet" onclick="closeModal()">Cancel</button></div>
     </div>`);
 
   $('#okBtn').addEventListener('click', async () => {
-    const btn = $('#okBtn'); btn.disabled = true; btn.innerHTML = 'পাঠাচ্ছি… <span class="spin"></span>';
+    const btn = $('#okBtn'); btn.disabled = true; btn.innerHTML = 'Applying… <span class="spin"></span>';
     try {
       await api(`/api/v1/mappings/${mappingId}/approve-replacement`, {
         method: 'POST',
@@ -808,18 +915,20 @@ window.approve = async (resultId, mappingId) => {
         }),
       });
       closeModal();
-      toast(`ম্যাপিং #${mappingId} এখন <span class="mono">${h(target)}</span>-এ। ইতিহাসে লেখা হয়েছে।`, 'ok');
+      toast(`Mapping #${mappingId} now points at <span class="mono">${h(target)}</span>. `
+          + `The old code is safe in the history.`, 'ok');
       const card = $(`#rc-${resultId}`);
       if (card) {
         card.style.opacity = '.55';
         card.insertAdjacentHTML('beforeend',
-          `<div class="note ok mt mb0"><p>✔ অনুমোদিত — <b>${h(reviewer)}</b>।
-           <a href="#/mappings/${mappingId}">ইতিহাস দেখুন</a></p></div>`);
+          `<div class="note ok mt mb0"><p>✔ Approved by <b>${h(reviewer)}</b>.
+           <a href="#/mappings/${mappingId}">See the history</a></p></div>`);
         card.querySelectorAll('button, select, input').forEach(x => x.disabled = true);
       }
+      refreshBadge();
     } catch (e) {
       closeModal();
-      toast('অনুমোদন প্রত্যাখ্যাত: ' + h(e.message), 'bad');
+      toast('Refused: ' + h(e.message), 'bad');
     }
   });
 };
@@ -833,21 +942,22 @@ ROUTES.compare = async (rest) => {
     releases.forEach(r => { (bySys[r.system] = bySys[r.system] || []).push(r.version); });
 
     view().innerHTML = `<div class="page-head">
-        <h1>সংস্করণ তুলনা</h1>
-        <p class="lede">দুটি release পাশাপাশি রেখে কী বদলেছে দেখুন। LOINC-এর ক্ষেত্রে
-        আমাদের হিসাব <b>terminology-র নিজের change log</b>-এর সাথে মিলিয়েও দেখানো হয় —
-        সেখানে <b>missed = 0</b> হওয়াই লক্ষ্য।</p></div>
+        <h1>Compare versions</h1>
+        <p class="lede">Put two releases side by side and see what moved. For LOINC we also
+        check our own answer against <b>the change log the publisher ships with the
+        release</b> — so you do not have to take our word for it.</p></div>
 
       <div class="card">
         <div class="row">
           <div class="narrow"><label class="f" for="cSys">Terminology</label>
-            <select id="cSys">${Object.keys(bySys).map(s => `<option>${h(s)}</option>`).join('')}</select></div>
-          <div><label class="f" for="cOld">পুরনো</label><select id="cOld"></select></div>
-          <div><label class="f" for="cNew">নতুন</label><select id="cNew"></select></div>
-          <div class="narrow"><button id="cGo" type="button">তুলনা করুন</button></div>
+            <select id="cSys">${Object.keys(bySys).map(s =>
+              `<option value="${h(s)}">${h(sysName(s))}</option>`).join('')}</select></div>
+          <div><label class="f" for="cOld">Older version</label><select id="cOld"></select></div>
+          <div><label class="f" for="cNew">Newer version</label><select id="cNew"></select></div>
+          <div class="auto"><button id="cGo" type="button">Compare</button></div>
         </div>
-        <p class="hint mt mb0">দুটি পূর্ণ LOINC release তুলনা করতে কয়েক সেকেন্ড লাগে —
-          দুই লাখেরও বেশি সারি পড়তে হয়।</p>
+        <p class="hint mt mb0">Comparing two full LOINC releases takes a few seconds — it means
+          reading a couple of hundred thousand rows.</p>
       </div>
       <div id="cOut"></div>`;
 
@@ -870,9 +980,9 @@ ROUTES.compare = async (rest) => {
 
     const run = async () => {
       const sys = $('#cSys').value, old = $('#cOld').value, nw = $('#cNew').value;
-      if (old === nw) { toast('দুটি ভিন্ন সংস্করণ বাছুন।', 'bad'); return; }
+      if (old === nw) { toast('Pick two different versions.', 'bad'); return; }
       $('#cOut').innerHTML = `<div class="empty"><span class="spin"></span>
-        <p>${h(old)} আর ${h(nw)} মিলিয়ে দেখছি…</p></div>`;
+        <p>Comparing ${h(old)} with ${h(nw)}…</p></div>`;
       try {
         const d = await api(`/api/v1/releases/diff?system=${encodeURIComponent(sys)}`
           + `&old=${encodeURIComponent(old)}&new=${encodeURIComponent(nw)}`);
@@ -883,13 +993,13 @@ ROUTES.compare = async (rest) => {
     };
 
     $('#cGo').addEventListener('click', () => {
-      const h2 = `#/compare/${$('#cSys').value}/${encodeURIComponent($('#cOld').value)}`
-               + `/${encodeURIComponent($('#cNew').value)}`;
-      if (location.hash !== h2) { location.hash = h2; } else { run(); }
+      const target = `#/compare/${$('#cSys').value}/${encodeURIComponent($('#cOld').value)}`
+                   + `/${encodeURIComponent($('#cNew').value)}`;
+      if (location.hash !== target) { location.hash = target; } else { run(); }
     });
 
     if (rest && rest.length >= 3) run();
-  } catch (e) { failed(e, 'release তালিকা আনা গেল না'); }
+  } catch (e) { failed(e, 'Could not load the version list'); }
 };
 
 function diffCard(d) {
@@ -899,23 +1009,29 @@ function diffCard(d) {
 
   const validation = (isLoinc && v.change_snapshot_available !== false) ? `
     <div class="card">
-      <h2>আমাদের হিসাব বনাম terminology-র নিজের হিসাব</h2>
-      <p class="hint">এটাই প্রধান শুদ্ধতার প্রমাণ। LOINC নিজেই লিখে রাখে কী বদলেছে —
-        আমরা সেই তালিকার সাথে মিলিয়ে দেখি।</p>
+      <h2>Our answer, checked against the publisher's own</h2>
+      <p class="hint">LOINC ships a list of everything it changed. We work the changes out
+        ourselves and then compare. The number that matters is <b>how many we missed</b>.</p>
       <div class="grid c4">
-        <div class="stat"><div class="n plain">${n(v.official_changes)}</div><div class="k">তারা বলেছে</div></div>
-        <div class="stat"><div class="n plain">${n(v.detected_changes)}</div><div class="k">আমরা পেয়েছি</div></div>
+        <div class="stat"><div class="n plain">${n(v.official_changes)}</div>
+          <div class="k">they published</div></div>
+        <div class="stat"><div class="n plain">${n(v.detected_changes)}</div>
+          <div class="k">we found</div></div>
         <div class="stat ${missed === 0 ? 'ok' : 'bad'}"><div class="n">${n(missed)}</div>
-          <div class="k">আমরা মিস করেছি</div><div class="sub">লক্ষ্য: 0</div></div>
+          <div class="k">we missed</div><div class="sub">must be 0</div></div>
         <div class="stat ${(v.unexpected_changes || 0) === 0 ? 'ok' : 'warn'}">
-          <div class="n">${n(v.unexpected_changes)}</div><div class="k">আমরা বাড়িয়ে বলেছি</div></div>
+          <div class="n">${n(v.unexpected_changes)}</div>
+          <div class="k">we over-reported</div><div class="sub">must be 0</div></div>
       </div>
       ${missed === 0
-        ? `<div class="note ok mt mb0"><p>✔ ঘোষিত ${n(v.official_changes)} টি পরিবর্তনের
-           <b>প্রতিটি</b> ধরা পড়েছে — একটিও মিস নয়, একটিও বাড়তি নয়।</p></div>`
-        : `<div class="note bad mt mb0"><p>${n(missed)} টি official পরিবর্তন ধরা পড়েনি।</p></div>`}
+        ? `<div class="note ok mt mb0"><p>✔ Every one of the ${n(v.official_changes)} published
+           changes was found — none missed, none invented. This is the strongest evidence the
+           tool can give you about its own correctness.</p></div>`
+        : `<div class="note bad mt mb0"><p>${plural(missed, 'published change')} went
+           undetected. That is a bug, not a finding.</p></div>`}
       ${Object.keys(v.unsupported_official_properties || {}).length ? `
-        <p class="hint mt mb0">যে ক্ষেত্রগুলো আমরা model করি না (চুপচাপ ফেলে দেওয়া হয় না, গোনা হয়):
+        <p class="hint mt mb0">Fields we do not track — counted and named here rather than
+        quietly dropped:
         ${Object.entries(v.unsupported_official_properties).map(([k, c]) =>
           `<span class="chip">${h(k)} ${n(c)}</span>`).join(' ')}</p>` : ''}
     </div>` : '';
@@ -924,30 +1040,52 @@ function diffCard(d) {
   const fields = d.changes_by_field || {};
 
   return `<div class="grid c4">
-      <div class="stat"><div class="n plain">${n(d.old_total)}</div><div class="k">${h(d.old_version)}-এ কোড</div></div>
-      <div class="stat"><div class="n plain">${n(d.new_total)}</div><div class="k">${h(d.new_version)}-এ কোড</div></div>
-      <div class="stat ok"><div class="n">${n(d.new_codes)}</div><div class="k">নতুন যোগ হয়েছে</div></div>
+      <div class="stat"><div class="n plain">${n(d.old_total)}</div>
+        <div class="k">codes in ${h(d.old_version)}</div></div>
+      <div class="stat"><div class="n plain">${n(d.new_total)}</div>
+        <div class="k">codes in ${h(d.new_version)}</div></div>
+      <div class="stat ok"><div class="n">${n(d.new_codes)}</div><div class="k">newly added</div></div>
       <div class="stat ${(d.removed_codes || 0) === 0 ? 'ok' : 'bad'}">
-        <div class="n">${n(d.removed_codes)}</div><div class="k">হারিয়ে গেছে</div>
-        <div class="sub">${(d.removed_codes || 0) === 0 ? 'যেমনটা হওয়া উচিত' : 'অস্বাভাবিক!'}</div></div>
+        <div class="n">${n(d.removed_codes)}</div><div class="k">disappeared</div>
+        <div class="sub">${(d.removed_codes || 0) === 0
+          ? 'as it should be — codes are never deleted'
+          : 'unexpected: worth investigating'}</div></div>
     </div>
     ${validation}
     <div class="grid c2">
-      <div class="card mb0"><h2>অবস্থার পরিবর্তন</h2>
-        <p class="hint">যাতায়াত দুদিকেই হয় — কোড ফিরেও আসে।</p>
+      <div class="card mb0"><h2>Codes that changed status</h2>
+        <p class="hint">It goes both ways — retired codes are sometimes brought back.</p>
         ${Object.keys(trans).length ? `<table class="tbl">
           <tbody>${Object.entries(trans).sort((a, b) => b[1] - a[1]).map(([k, c]) =>
-            `<tr><td class="mono small">${h(k)}</td><td class="num">${n(c)}</td></tr>`).join('')}
-          </tbody></table>` : '<p class="muted">কোনো অবস্থা বদলায়নি।</p>'}
+            `<tr><td class="small">${h(prettyTransition(k))}</td><td class="num">${n(c)}</td></tr>`).join('')}
+          </tbody></table>` : '<p class="muted">No status changed between these two.</p>'}
       </div>
-      <div class="card mb0"><h2>কোন ক্ষেত্রে কত পরিবর্তন</h2>
-        <p class="hint">মোট ${n(d.total_field_changes)} টি, ${n(d.changed_codes)} টি কোডে।</p>
+      <div class="card mb0"><h2>Which fields changed</h2>
+        <p class="hint">${n(d.total_field_changes)} edits across ${n(d.changed_codes)} codes.</p>
         ${Object.keys(fields).length ? `<table class="tbl">
           <tbody>${Object.entries(fields).sort((a, b) => b[1] - a[1]).map(([k, c]) =>
-            `<tr><td class="mono small">${h(k)}</td><td class="num">${n(c)}</td></tr>`).join('')}
-          </tbody></table>` : '<p class="muted">কিছু বদলায়নি।</p>'}
+            `<tr><td class="small">${h(prettyField(k))}</td><td class="num">${n(c)}</td></tr>`).join('')}
+          </tbody></table>` : '<p class="muted">Nothing changed.</p>'}
       </div>
     </div>`;
+}
+
+function prettyTransition(t) {
+  const word = s => ({
+    ACTIVE: 'active', TRIAL: 'trial', DISCOURAGED: 'discouraged',
+    DEPRECATED: 'retired', INACTIVE: 'inactive',
+  })[s.trim()] || s.trim().toLowerCase();
+  const parts = t.split('->');
+  return parts.length === 2 ? `${word(parts[0])} → ${word(parts[1])}` : t;
+}
+
+function prettyField(f) {
+  return ({
+    status: 'status', long_common_name: 'full name', short_name: 'short name',
+    component: 'what is measured', property: 'kind of measurement',
+    time_aspect: 'timing', system: 'specimen', scale_type: 'scale',
+    method_type: 'method', class_name: 'class',
+  })[f] || f.replace(/_/g, ' ');
 }
 
 // ================================================================== RELEASES
@@ -956,28 +1094,30 @@ ROUTES.releases = async () => {
   try {
     const rows = await api('/api/v1/releases');
     view().innerHTML = `<div class="page-head">
-        <h1>Release তালিকা</h1>
-        <p class="lede">যা একবার import হয়েছে তা চিরকাল এখানে থাকে। নতুন release এলে
-        পুরনোটা মুছে যায় না — শুধু "current" পতাকা সরে যায়। এর ওপরেই পুরো
-        পুনরুৎপাদনযোগ্যতা দাঁড়িয়ে।</p></div>
+        <h1>Versions loaded</h1>
+        <p class="lede">Everything ever imported stays here. A newer release does not replace
+        an older one — only the "in use now" flag moves. That is what lets you re-run last
+        year's check and get last year's answer.</p></div>
       <div class="card"><div class="tbl-wrap"><table class="tbl">
-        <thead><tr><th>Terminology</th><th>সংস্করণ</th><th>কার্যকর</th><th>অবস্থা</th>
-          <th>import</th><th>ফাইল</th><th>SHA-256</th><th>যা ঢুকেছে</th></tr></thead>
+        <thead><tr><th>Terminology</th><th>Version</th><th>In force since</th><th>State</th>
+          <th>Loaded</th><th>From file</th><th>Fingerprint</th><th>What came in</th></tr></thead>
         <tbody>${rows.map(r => `<tr>
-          <td>${h(r.system)}</td>
+          <td>${h(sysName(r.system))}</td>
           <td class="mono"><b>${h(r.version)}</b></td>
           <td class="small">${dash(r.effective_date)}</td>
-          <td>${r.is_current ? '<span class="pill keep">current</span>' : '<span class="pill neutral">superseded</span>'}</td>
+          <td>${r.is_current ? '<span class="pill keep">in use now</span>'
+                             : '<span class="pill neutral">superseded</span>'}</td>
           <td class="small">${when(r.imported_at)}</td>
           <td class="mono small">${h(r.source_filename)}</td>
           <td class="mono small faint" title="${h(r.sha256)}">${h(r.sha256.slice(0, 16))}…</td>
           <td class="small faint">${dash(r.notes)}</td>
         </tr>`).join('')}</tbody></table></div></div>
 
-      <div class="note"><p><b>SHA-256 কেন?</b> ফাইলের নাম বদলে দিলেও এই ছাপ বদলায় না,
-      আর ভেতরে একটা অক্ষর বদলালেই পুরো ছাপ বদলে যায়। তাই একই ডেটা দুবার import হওয়া
-      অসম্ভব — নাম যা-ই হোক।</p></div>`;
-  } catch (e) { failed(e, 'release তালিকা আনা গেল না'); }
+      <div class="note"><p><b>What is a fingerprint for?</b> It is computed from the file's
+      contents. Rename the file and it stays the same; change one character inside and it
+      changes completely. So the same release can never be imported twice by accident, whatever
+      it happens to be called.</p></div>`;
+  } catch (e) { failed(e, 'Could not load the version list'); }
 };
 
 // ====================================================================== HELP
@@ -985,43 +1125,63 @@ ROUTES.help = () => {
   const rows = Object.entries(DECISION).map(([k, d]) => `<tr>
       <td>${pill(k)}</td><td class="mono small">${h(k)}</td><td>${h(d.say)}</td></tr>`).join('');
   const st = Object.entries(STATUS).map(([k, s]) => `<tr>
-      <td>${statPill(k)}</td><td class="mono small">${h(k)}</td></tr>`).join('');
+      <td>${statPill(k)}</td><td class="mono small">${h(k)}</td><td>${h(s.say)}</td></tr>`).join('');
   const rs = Object.entries(REASON).map(([k, v]) => `<tr>
       <td class="mono small nowrap">${h(k)}</td><td>${h(v)}</td></tr>`).join('');
 
   view().innerHTML = `<div class="page-head">
-      <h1>শব্দের মানে</h1>
-      <p class="lede">এই কনসোল যেসব যান্ত্রিক শব্দ দেখায়, তার প্রতিটির অর্থ।</p></div>
+      <h1>What the words mean</h1>
+      <p class="lede">Every technical word this app can show you, in plain English.</p></div>
 
-    <div class="card"><h2>যন্ত্র যে পাঁচটি সিদ্ধান্ত নিতে পারে</h2>
-      <p class="hint">এর বাইরে সে কিছু বলতে পারে না — ইচ্ছাকৃতভাবে।</p>
+    <div class="card"><h2>Start here: a worked example</h2>
+      <p>Say your lab has a test called <b>INR(PT)</b> — the standard clotting test for anyone
+      on warfarin. Years ago somebody mapped it to LOINC code <span class="mono">5895-7</span>.</p>
+      <p>LOINC has since <b>retired</b> that code and published exactly one successor,
+      <span class="mono">6301-6</span>. The old code was not deleted — it still resolves, still
+      looks perfectly normal in your database, and nothing anywhere would have flagged it.</p>
+      <p>So this app says: status <b>Retired</b>, verdict <b>Replacement available</b>, because
+      <i>exactly one official replacement is published</i>. It shows you the new code and waits.
+      It will not switch anything until you say so — and when you do, your name and the old code
+      are kept for good.</p>
+      <p class="mb0"><a href="#/lookup/LOINC/5895-7">See that exact case →</a></p></div>
+
+    <div class="card"><h2>The five verdicts</h2>
+      <p class="hint">The engine can only ever say one of these five things. That is deliberate:
+        a fixed vocabulary is one you can audit.</p>
       <div class="tbl-wrap"><table class="tbl">
-        <thead><tr><th>সিদ্ধান্ত</th><th>API-তে</th><th>মানে</th></tr></thead>
+        <thead><tr><th>Verdict</th><th>In the API</th><th>What it means</th></tr></thead>
         <tbody>${rows}</tbody></table></div></div>
 
-    <div class="card"><h2>কোডের অবস্থা</h2>
+    <div class="card"><h2>What a code's status means</h2>
       <div class="tbl-wrap"><table class="tbl">
-        <thead><tr><th>অবস্থা</th><th>API-তে</th></tr></thead><tbody>${st}</tbody></table></div></div>
+        <thead><tr><th>Status</th><th>In the API</th><th>What it means</th></tr></thead>
+        <tbody>${st}</tbody></table></div></div>
 
-    <div class="card"><h2>কারণের কোড</h2>
+    <div class="card"><h2>The reason codes</h2>
+      <p class="hint">Every verdict comes with one of these, so you can always ask "why?"</p>
       <div class="tbl-wrap"><table class="tbl">
-        <thead><tr><th>কারণ</th><th>মানে</th></tr></thead><tbody>${rs}</tbody></table></div></div>
+        <thead><tr><th>Reason</th><th>What it means</th></tr></thead>
+        <tbody>${rs}</tbody></table></div></div>
 
-    <div class="card"><h2>তিনটি নিয়ম যা কখনো ভাঙা হয় না</h2>
+    <div class="card"><h2>Three rules this app never breaks</h2>
       <ol>
-        <li><b>নিশ্চিত না হলে যন্ত্র চুপ করে যায়।</b> দুটি সম্ভাব্য উত্তর থাকলে সে বাছে না —
-          <span class="mono">MANUAL_REVIEW</span> বলে। ভুল উত্তরের চেয়ে "জানি না" ভালো।</li>
-        <li><b>যন্ত্র নিজে থেকে কিছু বদলায় না।</b> নিরীক্ষা শুধু রায় লেখে। কোড বদলাতে
-          নামসহ একজন মানুষের অনুমোদন লাগে।</li>
-        <li><b>ইতিহাস কখনো মোছে না।</b> কোড বদলালে পুরনোটা ও তার release একটি নতুন
-          সারিতে থেকে যায়। ছয় মাস পরেও বলা যায় কোন সিদ্ধান্ত কীসের ভিত্তিতে হয়েছিল।</li>
+        <li><b>When it is not sure, it says so.</b> If two replacements are equally official, it
+          will not pick one for you. A wrong answer delivered confidently is worse than no answer
+          at all.</li>
+        <li><b>It never changes anything by itself.</b> A check only records what it found.
+          Changing a code takes a named person pressing a button, and the new code is
+          re-validated at that moment.</li>
+        <li><b>It never forgets.</b> Change a code and the old one, the release it was valid in,
+          who changed it and why are all kept. Six months from now you can still reconstruct
+          exactly why a decision was made.</li>
       </ol></div>
 
-    <div class="card"><h2>"কোন সংস্করণের বিপরীতে" কথাটা কেন সবখানে</h2>
-      <p>একটা কোড <i>নিজে থেকে</i> বৈধ বা অবৈধ নয় — সে কোনো একটা নির্দিষ্ট release-এ
-      বৈধ বা অবৈধ। তাই এই কনসোল কোনো রায় দেখায় না যতক্ষণ না তার সাথে release-টির নামও
-      দেখানো যায়। ২০২৬ সালে ঠিক থাকা একটা উত্তর ২০২৭-এ ভুল হতে পারে, আর সেটা লুকিয়ে
-      রাখলে পুরো ব্যবস্থাটাই অর্থহীন।</p></div>`;
+    <div class="card"><h2>Why every answer names a version</h2>
+      <p class="mb0">A code is not valid or invalid in the abstract — it is valid <i>in a
+      particular release</i>. An answer that was right in 2026 can be wrong in 2027, and an
+      answer that hides which release it came from cannot be checked, reproduced or defended.
+      So this app will not show you a verdict without telling you what it was measured against.
+      That single habit is the whole point of the project.</p></div>`;
 };
 
 // ------------------------------------------------------------------ startup
@@ -1040,19 +1200,29 @@ async function health() {
   try {
     const hh = await api('/health');
     const ok = hh.status === 'ok';
-    line.innerHTML = `<span class="pill ${ok ? 'keep' : 'warning'}">${ok ? 'সংযুক্ত' : h(hh.status)}</span>`
-      + `<div class="mt small">DB ${hh.database ? '✔' : '✘'}`
-      + ` · Snowstorm ${hh.snowstorm?.available ? '✔' : '<span title="term search unavailable">—</span>'}</div>`;
-  } catch (e) {
-    line.innerHTML = `<span class="pill unknown">সংযোগ নেই</span>`;
+    line.innerHTML = `<span class="pill ${ok ? 'keep' : 'warning'}">${ok ? 'Connected' : h(hh.status)}</span>`
+      + `<div class="mt small">Database ${hh.database ? '✔' : '✘'}`
+      + ` · Search server ${hh.snowstorm?.available
+          ? '✔'
+          : '<span title="Optional. Everything except free-text search works without it.">off</span>'}</div>`;
+  } catch {
+    line.innerHTML = `<span class="pill unknown">Not connected</span>
+      <div class="mt small">Is the server still running?</div>`;
   }
 }
 
 $('#themeBtn').addEventListener('click', () => {
   const cur = document.documentElement.getAttribute('data-theme');
   const next = cur === 'dark' ? 'light' : cur === 'light' ? '' : 'dark';
-  if (next) { document.documentElement.setAttribute('data-theme', next); localStorage.setItem('vas.theme', next); }
-  else { document.documentElement.removeAttribute('data-theme'); localStorage.removeItem('vas.theme'); }
+  if (next) {
+    document.documentElement.setAttribute('data-theme', next);
+    localStorage.setItem('vas.theme', next);
+    toast(`Theme: ${next}`, '');
+  } else {
+    document.documentElement.removeAttribute('data-theme');
+    localStorage.removeItem('vas.theme');
+    toast('Theme: follows your system', '');
+  }
 });
 const savedTheme = localStorage.getItem('vas.theme');
 if (savedTheme) document.documentElement.setAttribute('data-theme', savedTheme);
